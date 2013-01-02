@@ -39,16 +39,18 @@
 
 #include "bcm2835_common.h"
 
-#define BITS 8
-#include "milkymist-vgafb_template.h"
-#define BITS 15
-#include "milkymist-vgafb_template.h"
-#define BITS 16
-#include "milkymist-vgafb_template.h"
-#define BITS 24
-#include "milkymist-vgafb_template.h"
-#define BITS 32
-#include "milkymist-vgafb_template.h"
+//#define BITS 8
+//#include "milkymist-vgafb_template.h"
+//#define BITS 15
+//#include "milkymist-vgafb_template.h"
+//#define BITS 16
+//#include "milkymist-vgafb_template.h"
+//#define BITS 24
+//#include "milkymist-vgafb_template.h"
+//#define BITS 32
+//#include "milkymist-vgafb_template.h"
+
+bcm2835_fb_type bcm2835_fb;
 
 typedef struct {
     SysBusDevice busdev;
@@ -56,23 +58,74 @@ typedef struct {
 
     int pending;
     qemu_irq mbox_irq;
-    
-    DisplayState *ds;
-    int invalidate;
-    int enabled;
-    
-    uint32_t xres, yres;
-    uint32_t xres_virtual, yres_virtual;
-    uint32_t xoffset, yoffset;
-    uint32_t bpp;
-    uint32_t base, pitch, size;
 } bcm2835_fb_state;
 
 static void fb_invalidate_display(void *opaque)
 {
-    bcm2835_fb_state *s = (bcm2835_fb_state *)opaque;
-    s->invalidate = 1;
+    // bcm2835_fb_state *s = (bcm2835_fb_state *)opaque;
+    bcm2835_fb.invalidate = 1;
 }
+
+static void draw_line_src16(void *opaque, uint8_t *d, const uint8_t *s,
+        int width, int deststep)
+{
+    uint16_t rgb565;
+    uint32_t rgb888;
+    uint8_t r, g, b;
+
+    int bpp = ds_get_bits_per_pixel(bcm2835_fb.ds);
+
+    while (width--) {
+        switch(bcm2835_fb.bpp) {
+        case 16:
+            rgb565 = lduw_raw(s);
+            r = ((rgb565 >> 11) & 0x1f) << 3;
+            g = ((rgb565 >>  5) & 0x3f) << 2;
+            b = ((rgb565 >>  0) & 0x1f) << 3;
+            s += 2;
+            break;
+        case 32:
+            rgb888 = ldl_raw(s);
+            r = rgb888 >> 24;
+            g = rgb888 >> 16;
+            b = rgb888 >> 8;
+            s += 4;
+            break;
+        default:
+            r = 0;
+            g = 0;
+            b = 0;
+            break;
+        }
+        
+        switch(bpp) {
+        case 8:
+            *d++ = rgb_to_pixel8(r, g, b);
+            break;
+        case 15:
+            *(uint16_t *)d = rgb_to_pixel15(r, g, b);
+            d += 2;
+            break;
+        case 16:
+            *(uint16_t *)d = rgb_to_pixel16(r, g, b);
+            d += 2;
+            break;
+        case 24:
+            rgb888 = rgb_to_pixel24(r, g, b);
+            *d++ = rgb888 & 0xff;
+            *d++ = (rgb888 >> 8) & 0xff;
+            *d++ = (rgb888 >> 16) & 0xff;
+            break;
+        case 32:
+            *(uint32_t *)d = rgb_to_pixel32(r, g, b);
+            d += 4;
+            break;
+        default:
+            return;
+        }
+    }
+}
+
 static void fb_update_display(void *opaque)
 {
     bcm2835_fb_state *s = (bcm2835_fb_state *)opaque;
@@ -83,33 +136,27 @@ static void fb_update_display(void *opaque)
     int src_width = 0;
     int dest_width = 0;
     
-    if (!s->enabled)
+    if (!bcm2835_fb.xres)
         return;
     
-    // Assuming source is 16bpp for now
-    src_width = s->xres * 2;
+    src_width = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
     
-    dest_width = s->xres;
-    switch (ds_get_bits_per_pixel(s->ds)) {
+    dest_width = bcm2835_fb.xres;
+    switch (ds_get_bits_per_pixel(bcm2835_fb.ds)) {
     case 0:
         return;
     case 8:
-        fn = draw_line_8;
         break;
     case 15:
-        fn = draw_line_15;
         dest_width *= 2;
         break;
     case 16:
-        fn = draw_line_16;
         dest_width *= 2;
         break;
     case 24:
-        fn = draw_line_24;
         dest_width *= 3;
         break;
     case 32:
-        fn = draw_line_32;
         dest_width *= 4;
         break;
     default:
@@ -117,22 +164,28 @@ static void fb_update_display(void *opaque)
         break;
     }
 
-    framebuffer_update_display(s->ds, sysbus_address_space(&s->busdev),
-        s->base,
-        s->xres,
-        s->yres,
+
+    
+    fn = draw_line_src16;
+
+    framebuffer_update_display(bcm2835_fb.ds, 
+        sysbus_address_space(&s->busdev),
+        bcm2835_fb.base,
+        bcm2835_fb.xres,
+        bcm2835_fb.yres,
         src_width,
         dest_width,
         0,
-        s->invalidate,
+        bcm2835_fb.invalidate,
         fn,
         NULL,
         &first, &last);
     if (first >= 0) {
-        dpy_gfx_update(s->ds, 0, first, s->xres, last - first + 1);
+        dpy_gfx_update(bcm2835_fb.ds, 0, first, 
+            bcm2835_fb.xres, last - first + 1);
     }
 
-    s->invalidate = 0;
+    bcm2835_fb.invalidate = 0;
 }
 
 
@@ -141,35 +194,28 @@ static void bcm2835_fb_mbox_push(bcm2835_fb_state *s, uint32_t value)
 {
     value &= ~0xf;
     
-    s->xres = ldl_phys(value);
-    s->yres = ldl_phys(value + 4);
-    s->xres_virtual = ldl_phys(value + 8);
-    s->yres_virtual = ldl_phys(value + 12);
+    bcm2835_fb.xres = ldl_phys(value);
+    bcm2835_fb.yres = ldl_phys(value + 4);
+    bcm2835_fb.xres_virtual = ldl_phys(value + 8);
+    bcm2835_fb.yres_virtual = ldl_phys(value + 12);
     
-    s->bpp = ldl_phys(value + 20);
-    s->xoffset = ldl_phys(value + 24);
-    s->yoffset = ldl_phys(value + 28);
+    bcm2835_fb.bpp = ldl_phys(value + 20);
+    bcm2835_fb.xoffset = ldl_phys(value + 24);
+    bcm2835_fb.yoffset = ldl_phys(value + 28);
     
-    s->base = bcm2835_vcram_base | (value & 0xc0000000);
-
-    assert(s->bpp == 16);
+    bcm2835_fb.base = bcm2835_vcram_base | (value & 0xc0000000);
 
     // TODO - Manage properly virtual resolution
-    /*if (s->bpp == 16) {
-        s->pitch = ((s->xres_virtual + 1) & ~1) * 2;
-    }
-    s->size = s->yres_virtual * s->pitch; 
-    */
-    s->pitch = s->xres * 2;
-    s->size = s->yres * s->pitch;
+
+    bcm2835_fb.pitch = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
+    bcm2835_fb.size = bcm2835_fb.yres * bcm2835_fb.pitch;
     
-    stl_phys(value + 16, s->pitch);
-    stl_phys(value + 32, s->base);
-    stl_phys(value + 36, s->size);
+    stl_phys(value + 16, bcm2835_fb.pitch);
+    stl_phys(value + 32, bcm2835_fb.base);
+    stl_phys(value + 36, bcm2835_fb.size);
     
-    qemu_console_resize(s->ds, s->xres, s->yres);
-    s->enabled = 1;
-    s->invalidate = 1;    
+    qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
+    bcm2835_fb.invalidate = 1;    
 }
 
 static uint64_t bcm2835_fb_read(void *opaque, hwaddr offset,
@@ -236,12 +282,12 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     
     s->pending = 0;
     
-    s->invalidate = 0;
-    s->enabled = 0;
+    bcm2835_fb.invalidate = 0;
+    bcm2835_fb.xres = 0;
         
     sysbus_init_irq(dev, &s->mbox_irq);
     
-    s->ds = graphic_console_init(fb_update_display,
+    bcm2835_fb.ds = graphic_console_init(fb_update_display,
         fb_invalidate_display,
         NULL, NULL, s);
 

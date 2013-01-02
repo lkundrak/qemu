@@ -458,6 +458,13 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
     case SDHCI_TRANSFER_MODE:   // CMDTM
         s->cmdtm = value;    
         cmd = ((value >> (16 + 8)) & 0x3f);
+
+        if (cmd == 7) {
+            /*request.cmd = 0;
+            request.arg = 0;
+            request.crc = 0;
+            sd_do_command(s->card, &request, response);*/
+        }
         
         request.cmd = cmd;
         request.arg = s->arg1;

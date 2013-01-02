@@ -7,7 +7,7 @@
 #include "qemu-common.h"
 #include "qdev.h"
 
-// #define LOG_UNMAPPED_ACCESS
+#define LOG_UNMAPPED_ACCESS
 
 typedef struct {
     SysBusDevice busdev;

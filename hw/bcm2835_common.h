@@ -16,4 +16,19 @@ extern hwaddr bcm2835_vcram_base;
 #define MBOX_SIZE       32
 #define MBOX_INVALID_DATA   0x0f
 
+typedef struct {
+    DisplayState *ds;
+    int invalidate;
+
+    uint32_t xres, yres;
+    uint32_t xres_virtual, yres_virtual;
+    uint32_t xoffset, yoffset;
+    uint32_t bpp;
+    uint32_t base, pitch, size;
+    
+    uint32_t pixo, alpha;
+} bcm2835_fb_type;
+
+extern bcm2835_fb_type bcm2835_fb;
+
 #endif
