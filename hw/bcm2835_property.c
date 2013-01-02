@@ -6,6 +6,9 @@
 #include "sysbus.h"
 #include "qemu-common.h"
 #include "qdev.h"
+#include "ui/console.h"
+#include "framebuffer.h"
+#include "ui/pixel_ops.h"
 
 #include "bcm2835_common.h"
 
@@ -14,7 +17,223 @@ typedef struct {
     MemoryRegion iomem;
     int pending;
     qemu_irq mbox_irq;
+    
+    uint32_t addr;
 } bcm2835_property_state;
+
+int bcm2835_fb_dirty;
+static void update_fb(void) {
+    bcm2835_fb_dirty = 1;
+
+    bcm2835_fb.base = bcm2835_vcram_base;
+    
+    // TODO - Manage properly virtual resolution
+
+    /*if (bcm2835_fb.yres == 1080)
+        bcm2835_fb.yres = 1088;*/
+
+    bcm2835_fb.pitch = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
+    bcm2835_fb.size = bcm2835_fb.yres * bcm2835_fb.pitch;
+}
+
+// From https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
+
+static void bcm2835_property_mbox_push(bcm2835_property_state *s, 
+    uint32_t value) 
+{
+    uint32_t size;
+    uint32_t tag;
+    uint32_t bufsize;
+    int n;
+    int resplen;
+    
+    bcm2835_fb_dirty = 0;
+    
+    value &= ~0xf;
+    s->addr = value;
+    
+    printf("=== PROPERTY MBOX PUSH BEGIN addr=%08x\n", s->addr);
+    size = ldl_phys(s->addr);
+
+    printf("Request:\n");
+    for(n = 0; n < size; n += 4) {
+        printf("[%08x] ", ldl_phys(s->addr + n));
+        if (((n >> 2) & 7) == 7) {
+            printf("\n");
+        }
+    }
+    printf("\n");
+    
+    // @(s->addr + 4) : Buffer response code
+    value = s->addr + 8;
+    do {
+        tag = ldl_phys(value);
+        bufsize = ldl_phys(value + 4);
+        // @(value + 8) : Request/response indicator
+        printf("TAG [%08x]\n", tag);
+        
+        resplen = 0;
+        switch(tag) { 
+        case 0x00000000: // End tag
+            break;
+        case 0x00000001: // Get firmware revision
+            resplen = 4;
+            break;
+
+        case 0x00010001: // Get board model
+            resplen = 4;
+            break;
+        case 0x00010002: // Get board revision
+            resplen = 4;
+            break;
+        case 0x00010003: // Get board MAC address
+            stl_phys(value + 12, 0xB827EBD0);
+            stl_phys(value + 16, 0xEEDF0000);
+            resplen = 6;
+            break;
+        case 0x00010004: // Get board serial
+            resplen = 8;
+            break;
+        case 0x00010005: // Get ARM memory
+            stl_phys(value + 12, 0); // base
+            stl_phys(value + 16, bcm2835_vcram_base); // size
+            resplen = 8;
+            break;
+        case 0x00010006: // Get VC memory
+            stl_phys(value + 12, bcm2835_vcram_base); // base
+            stl_phys(value + 16, VCRAM_SIZE); // size
+            resplen = 8;
+            break;
+
+        // Frame buffer
+
+        case 0x00040001: // Allocate buffer
+            stl_phys(value + 12, bcm2835_vcram_base); // base
+            stl_phys(value + 16, bcm2835_fb.size); // size
+            //stl_phys(value + 12, 0x1D400000); // base
+            //stl_phys(value + 16, 0x007F8000); // size
+            resplen = 8;
+            break;
+        case 0x00048001: // Release buffer
+            resplen = 0;
+            break;
+        case 0x00040002: // Blank screen
+            resplen = 4;
+            break;
+        case 0x00040003: // Get display width/height
+        case 0x00040004:
+            stl_phys(value + 12, bcm2835_fb.xres);
+            stl_phys(value + 16, bcm2835_fb.yres);
+            resplen = 8;
+            break;
+        case 0x00044003: // Test display width/height
+        case 0x00044004:
+            resplen = 8;
+            break;
+        case 0x00048003: // Set display width/height
+        case 0x00048004:
+            bcm2835_fb.xres = ldl_phys(value + 12);
+            bcm2835_fb.yres = ldl_phys(value + 16);
+            update_fb();
+            resplen = 8;
+            break;
+        case 0x00040005: // Get depth
+            stl_phys(value + 12, bcm2835_fb.bpp);
+            resplen = 4;
+            break;
+        case 0x00044005: // Test depth
+            resplen = 4;
+            break;
+        case 0x00048005: // Set depth
+            bcm2835_fb.bpp = ldl_phys(value + 12);
+            update_fb();
+            resplen = 4;
+            break;
+        case 0x00040006: // Get pixel order
+            stl_phys(value + 12, bcm2835_fb.pixo);
+            resplen = 4;
+            break;
+        case 0x00044006: // Test pixel order
+            resplen = 4;
+            break;
+        case 0x00048006: // Set pixel order
+            bcm2835_fb.pixo = ldl_phys(value + 12);
+            update_fb();
+            resplen = 4;
+            break;
+        case 0x00040007: // Get alpha
+            stl_phys(value + 12, bcm2835_fb.alpha);
+            resplen = 4;
+            break;
+        case 0x00044007: // Test pixel alpha
+            resplen = 4;
+            break;
+        case 0x00048007: // Set alpha
+            bcm2835_fb.alpha = ldl_phys(value + 12);
+            update_fb();
+            resplen = 4;
+            break;
+        case 0x00040008: // Get pitch
+            stl_phys(value + 12, bcm2835_fb.pitch);
+            resplen = 4;
+            break;
+        case 0x00040009: // Get virtual offset
+            stl_phys(value + 12, bcm2835_fb.xoffset);
+            stl_phys(value + 16, bcm2835_fb.yoffset);
+            resplen = 8;
+            break;
+        case 0x00044009: // Test virtual offset
+            resplen = 8;
+            break;
+        case 0x00048009: // Set virtual offset
+            bcm2835_fb.xoffset = ldl_phys(value + 12);
+            bcm2835_fb.yoffset = ldl_phys(value + 16);
+            update_fb();
+            stl_phys(value + 12, bcm2835_fb.xres);
+            stl_phys(value + 16, bcm2835_fb.yres);
+            resplen = 8;
+            break;
+
+        case 0x00060001: // Get DMA channels
+            stl_phys(value + 12, 0x003C); // channels 2-5 
+            resplen = 4;
+            break;
+        
+        case 0x00050001: // Get command line
+            resplen = 0;
+            break;
+        
+        default:
+            qemu_log_mask(LOG_GUEST_ERROR,
+                "bcm2835_property: unhandled tag %08x\n", tag);
+            break;
+        }
+        if (tag != 0) {
+            stl_phys(value + 8, (1 << 31) | resplen);
+        }
+        
+        value += bufsize + 12;  
+    } while(tag != 0);
+    
+    // Buffer response code
+    stl_phys(s->addr + 4, (1 << 31));
+
+    printf("Response:\n");
+    for(n = 0; n < size; n += 4) {
+        printf("[%08x] ", ldl_phys(s->addr + n));
+        if (((n >> 2) & 7) == 7) {
+            printf("\n");
+        }
+    }
+    printf("\n");
+    
+    printf("=== PROPERTY MBOX PUSH END\n");
+    
+    if (bcm2835_fb_dirty) {
+        qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
+        bcm2835_fb.invalidate = 1;    
+    }
+}
 
 static uint64_t bcm2835_property_read(void *opaque, hwaddr offset,
     unsigned size)
@@ -24,7 +243,7 @@ static uint64_t bcm2835_property_read(void *opaque, hwaddr offset,
     
     switch(offset) {
     case 0:
-        res = MBOX_CHAN_PROPERTY;
+        res = MBOX_CHAN_PROPERTY | s->addr;
         s->pending = 0;
         qemu_set_irq(s->mbox_irq, 0);
         break;
@@ -44,8 +263,11 @@ static void bcm2835_property_write(void *opaque, hwaddr offset,
     bcm2835_property_state *s = (bcm2835_property_state *)opaque;
     switch(offset) {
     case 0:
-        s->pending = 1;
-        qemu_set_irq(s->mbox_irq, 1);
+        if (!s->pending) {
+            s->pending = 1;
+            bcm2835_property_mbox_push(s, value);
+            qemu_set_irq(s->mbox_irq, 1);
+        }
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -78,6 +300,7 @@ static int bcm2835_property_init(SysBusDevice *dev)
     bcm2835_property_state *s = FROM_SYSBUS(bcm2835_property_state, dev);
     
     s->pending = 0;
+    s->addr = 0;
     
     sysbus_init_irq(dev, &s->mbox_irq);
     memory_region_init_io(&s->iomem, &bcm2835_property_ops, s, 

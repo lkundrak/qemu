@@ -1239,6 +1239,15 @@ void register_cp_regs_for_features(ARMCPU *cpu)
         define_one_arm_cp_reg(cpu, &auxcr);
     }
 
+    if (arm_feature(env, ARM_FEATURE_V6_VECBASE)) {
+        ARMCPRegInfo v6_vecbase = {
+            .name = "VBAR", .cp = 15, .crn = 12, .crm = 0, .opc1 = 0, .opc2 = 0,
+            .access = PL1_RW, 
+            .fieldoffset = offsetof(CPUARMState, cp15.c12_vecbase),
+        };
+        define_one_arm_cp_reg(cpu, &v6_vecbase);
+    }
+
     /* Generic registers whose values depend on the implementation */
     {
         ARMCPRegInfo sctlr = {
@@ -1885,6 +1894,9 @@ void do_interrupt(CPUARMState *env)
     /* High vectors.  */
     if (env->cp15.c1_sys & (1 << 13)) {
         addr += 0xffff0000;
+    } else if (arm_feature(env, ARM_FEATURE_V6_VECBASE)) {
+        /* Vector base address */
+        addr += env->cp15.c12_vecbase;
     }
     switch_mode (env, new_mode);
     env->spsr = cpsr_read(env);

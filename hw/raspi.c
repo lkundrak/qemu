@@ -17,6 +17,7 @@
 #include "sysbus.h"
 #include "arm-misc.h"
 #include "devices.h"
+#include "loader.h"
 #include "sysemu/sysemu.h"
 #include "boards.h"
 #include "exec/address-spaces.h"
@@ -26,6 +27,40 @@
 
 // Globals
 hwaddr bcm2835_vcram_base;
+
+const uint32_t bootloader_0[] = {
+0xea000006,
+0xe1a00000,
+0xe1a00000,
+0xe1a00000,
+0xe1a00000,
+0xe1a00000,
+0xe1a00000,
+0xe1a00000,
+
+0xe3a00000,
+0xe3a01042,
+0xe3811c0c,
+0xe59f2000,
+0xe59ff000,
+0x00000100,
+0x00008000
+};
+
+const uint32_t bootloader_400[] = {
+0x00000005,
+0x54410001,
+0x00000001,
+0x00001000,
+0x00000000,
+0x00000004,
+0x54410002,
+0x08000000,
+0x00000000,
+0x00000000,
+0x00000000
+};
+
 
 static struct arm_boot_info raspi_binfo;
 
@@ -52,6 +87,9 @@ static void raspi_init(QEMUMachineInitArgs *args)
     MemoryRegion *per_dma1_bus = g_new(MemoryRegion, 1);
     MemoryRegion *per_dma2_bus = g_new(MemoryRegion, 1);
     
+    // TEMP - debug
+    MemoryRegion *ua = g_new(MemoryRegion, 1);
+    
     MemoryRegion *mr;
     
     qemu_irq *cpu_pic;
@@ -59,7 +97,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     qemu_irq mbox_irq[MBOX_CHAN_COUNT];
 
     DeviceState *dev;
-        SysBusDevice *s;
+    SysBusDevice *s;
         
     int n;
 
@@ -69,6 +107,11 @@ static void raspi_init(QEMUMachineInitArgs *args)
         exit(1);
     }
     
+    // TEMP - debug
+    memory_region_init_ram(ua, "ua.ram", 0x1000);
+    vmstate_register_ram_global(ua);
+    memory_region_add_subregion(sysmem, 0xfe800000, ua);
+
     bcm2835_vcram_base = args->ram_size - VCRAM_SIZE;
     
     bcm2835_ram = g_new(MemoryRegion, 1);
@@ -251,7 +294,24 @@ static void raspi_init(QEMUMachineInitArgs *args)
     raspi_binfo.kernel_cmdline = args->kernel_cmdline;
     raspi_binfo.initrd_filename = args->initrd_filename;
     // raspi_binfo.board_id = board_id;
-    arm_load_kernel(cpu, &raspi_binfo);
+    
+    if (args->initrd_filename 
+        && !strcmp(args->kernel_filename, args->initrd_filename) 
+        ) {
+        
+        for(n = 0; n < ARRAY_SIZE(bootloader_0); n++) {
+            stl_phys( (n << 2), bootloader_0[n]);
+        }
+        for(n = 0; n < ARRAY_SIZE(bootloader_400); n++) {
+            stl_phys( 0x400 + (n << 2), bootloader_400[n]);
+        }
+        load_image_targphys(args->initrd_filename,
+                            0x8000,
+                            bcm2835_vcram_base - 0x8000);
+        cpu_reset(CPU(cpu));
+    } else {
+        arm_load_kernel(cpu, &raspi_binfo);
+    }
 }
 
 static QEMUMachine raspi_machine = {
