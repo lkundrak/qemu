@@ -223,6 +223,7 @@ libiscsi=""
 coroutine=""
 seccomp=""
 glusterfs=""
+virtio_blk_data_plane=""
 
 # parse CC options first
 for opt do
@@ -881,6 +882,10 @@ for opt do
   --disable-glusterfs) glusterfs="no"
   ;;
   --enable-glusterfs) glusterfs="yes"
+  ;;
+  --disable-virtio-blk-data-plane) virtio_blk_data_plane="no"
+  ;;
+  --enable-virtio-blk-data-plane) virtio_blk_data_plane="yes"
   ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
@@ -2274,6 +2279,17 @@ EOF
 fi
 
 ##########################################
+# adjust virtio-blk-data-plane based on linux-aio
+
+if test "$virtio_blk_data_plane" = "yes" -a \
+	"$linux_aio" != "yes" ; then
+  echo "Error: virtio-blk-data-plane requires Linux AIO, please try --enable-linux-aio"
+  exit 1
+elif test -z "$virtio_blk_data_plane" ; then
+  virtio_blk_data_plane=$linux_aio
+fi
+
+##########################################
 # attr probe
 
 if test "$attr" != "no" ; then
@@ -3086,6 +3102,21 @@ if compile_prog "" "" ; then
     has_environ=yes
 fi
 
+########################################
+# check if cpuid.h is usable.
+
+cpuid_h=no
+cat > $TMPC << EOF
+#include <cpuid.h>
+int main(void) {
+  return 0;
+}
+EOF
+if compile_prog "" "" ; then
+    cpuid_h=yes
+fi
+
+
 ##########################################
 # End of CC checks
 # After here, no more $cc or $ld runs
@@ -3274,6 +3305,7 @@ echo "build guest agent $guest_agent"
 echo "seccomp support   $seccomp"
 echo "coroutine backend $coroutine_backend"
 echo "GlusterFS support $glusterfs"
+echo "virtio-blk-data-plane $virtio_blk_data_plane"
 
 if test "$sdl_too_old" = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -3611,8 +3643,16 @@ if test "$has_environ" = "yes" ; then
   echo "CONFIG_HAS_ENVIRON=y" >> $config_host_mak
 fi
 
+if test "$cpuid_h" = "yes" ; then
+  echo "CONFIG_CPUID_H=y" >> $config_host_mak
+fi
+
 if test "$glusterfs" = "yes" ; then
   echo "CONFIG_GLUSTERFS=y" >> $config_host_mak
+fi
+
+if test "$virtio_blk_data_plane" = "yes" ; then
+  echo "CONFIG_VIRTIO_BLK_DATA_PLANE=y" >> $config_host_mak
 fi
 
 # USB host support
