@@ -12,6 +12,8 @@
 
 #include "bcm2835_common.h"
 
+//#define LOG_REG_ACCESS
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -26,11 +28,9 @@ static void update_fb(void) {
     bcm2835_fb_dirty = 1;
 
     bcm2835_fb.base = bcm2835_vcram_base;
+    bcm2835_fb.base += BCM2835_FB_OFFSET;
     
     // TODO - Manage properly virtual resolution
-
-    /*if (bcm2835_fb.yres == 1080)
-        bcm2835_fb.yres = 1088;*/
 
     bcm2835_fb.pitch = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
     bcm2835_fb.size = bcm2835_fb.yres * bcm2835_fb.pitch;
@@ -41,20 +41,25 @@ static void update_fb(void) {
 static void bcm2835_property_mbox_push(bcm2835_property_state *s, 
     uint32_t value) 
 {
+#ifdef LOG_REG_ACCESS   
     uint32_t size;
+#endif
     uint32_t tag;
     uint32_t bufsize;
     int n;
     int resplen;
+    uint32_t offset, length, color;
     
     bcm2835_fb_dirty = 0;
     
     value &= ~0xf;
     s->addr = value;
-    
-    printf("=== PROPERTY MBOX PUSH BEGIN addr=%08x\n", s->addr);
-    size = ldl_phys(s->addr);
 
+    
+
+#ifdef LOG_REG_ACCESS   
+    size = ldl_phys(s->addr);
+    printf("=== PROPERTY MBOX PUSH BEGIN addr=%08x\n", s->addr);
     printf("Request:\n");
     for(n = 0; n < size; n += 4) {
         printf("[%08x] ", ldl_phys(s->addr + n));
@@ -63,15 +68,17 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
         }
     }
     printf("\n");
-    
+#endif
+
     // @(s->addr + 4) : Buffer response code
     value = s->addr + 8;
     do {
         tag = ldl_phys(value);
         bufsize = ldl_phys(value + 4);
         // @(value + 8) : Request/response indicator
+#ifdef LOG_REG_ACCESS
         printf("TAG [%08x]\n", tag);
-        
+#endif        
         resplen = 0;
         switch(tag) { 
         case 0x00000000: // End tag
@@ -108,10 +115,8 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
         // Frame buffer
 
         case 0x00040001: // Allocate buffer
-            stl_phys(value + 12, bcm2835_vcram_base); // base
+            stl_phys(value + 12, bcm2835_fb.base); // base
             stl_phys(value + 16, bcm2835_fb.size); // size
-            //stl_phys(value + 12, 0x1D400000); // base
-            //stl_phys(value + 16, 0x007F8000); // size
             resplen = 8;
             break;
         case 0x00048001: // Release buffer
@@ -193,6 +198,28 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
             stl_phys(value + 16, bcm2835_fb.yres);
             resplen = 8;
             break;
+        case 0x0004000a: // Get/Test/Set overscan
+        case 0x0004400a:
+        case 0x0004800a:
+            stl_phys(value + 12, 0);
+            stl_phys(value + 16, 0);
+            stl_phys(value + 20, 0);
+            stl_phys(value + 24, 0);
+            resplen = 16;
+            break;
+
+        case 0x0004800b: // Set palette
+            offset = ldl_phys(value + 12);
+            length = ldl_phys(value + 16);
+            n = 0;
+            while(n < length - offset) {
+                color = ldl_phys(value + 20 + (n << 2));
+                stl_phys( bcm2835_vcram_base + ((offset + n) << 2), color );
+                n++;
+            }
+            stl_phys(value + 12, 0);
+            resplen = 4;
+            break;
 
         case 0x00060001: // Get DMA channels
             stl_phys(value + 12, 0x003C); // channels 2-5 
@@ -212,12 +239,13 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
             stl_phys(value + 8, (1 << 31) | resplen);
         }
         
-        value += bufsize + 12;  
+        value += bufsize + 12;
     } while(tag != 0);
     
     // Buffer response code
     stl_phys(s->addr + 4, (1 << 31));
 
+#ifdef LOG_REG_ACCESS
     printf("Response:\n");
     for(n = 0; n < size; n += 4) {
         printf("[%08x] ", ldl_phys(s->addr + n));
@@ -226,9 +254,9 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
         }
     }
     printf("\n");
-    
     printf("=== PROPERTY MBOX PUSH END\n");
-    
+#endif
+
     if (bcm2835_fb_dirty) {
         qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
         bcm2835_fb.invalidate = 1;    
