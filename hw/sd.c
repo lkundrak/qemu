@@ -34,7 +34,7 @@
 #include "sd.h"
 #include "qemu/bitmap.h"
 
-#define DEBUG_SD 1
+//#define DEBUG_SD 1
 
 #ifdef DEBUG_SD
 #define DPRINTF(fmt, ...) \

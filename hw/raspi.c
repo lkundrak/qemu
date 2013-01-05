@@ -295,9 +295,9 @@ static void raspi_init(QEMUMachineInitArgs *args)
     raspi_binfo.initrd_filename = args->initrd_filename;
     // raspi_binfo.board_id = board_id;
     
+    // Quick and dirty "selector"
     if (args->initrd_filename 
-        && !strcmp(args->kernel_filename, args->initrd_filename) 
-        ) {
+        && !strcmp(args->kernel_filename, args->initrd_filename)) {
         
         for(n = 0; n < ARRAY_SIZE(bootloader_0); n++) {
             stl_phys( (n << 2), bootloader_0[n]);

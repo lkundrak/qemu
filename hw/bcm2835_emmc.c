@@ -289,6 +289,8 @@
 #define MMC_CAP2_FORCE_MULTIBLOCK (1 << 4)  /* Always use multiblock transfers */
 
 
+//#define LOG_REG_ACCESS
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -321,7 +323,9 @@ typedef struct {
     
     int acmd;
     int write_op;
-        
+    
+    uint32_t bytecnt;
+    
     qemu_irq irq;
     
 } bcm2835_emmc_state;
@@ -335,13 +339,32 @@ static void bcm2835_emmc_set_irq(bcm2835_emmc_state *s)
     }
 }
 
+static void autocmd12(bcm2835_emmc_state *s) {
+    SDRequest request;
+    uint8_t response[16];
+
+    if (!(s->cmdtm & SDHCI_TRNS_AUTO_CMD12))
+        return;
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_emmc: issuing auto-CMD12\n");
+#endif
+
+    request.cmd = 12;
+    request.arg = 0;
+    request.crc = 0;
+    sd_do_command(s->card, &request, response);
+}
+
 static uint64_t bcm2835_emmc_read(void *opaque, hwaddr offset,
     unsigned size)
 {
     bcm2835_emmc_state *s = (bcm2835_emmc_state *)opaque;
     uint32_t res = 0;
     uint8_t tmp = 0;
-
+    int set_irq = 0;
+    uint32_t blkcnt;
+    uint8_t cmd;
+    
     assert(size == 4);
 
     switch(offset) {
@@ -370,6 +393,8 @@ static uint64_t bcm2835_emmc_read(void *opaque, hwaddr offset,
         res = s->resp3;
         break;
     case SDHCI_BUFFER:          // DATA
+        cmd = ((s->cmdtm >> (16 + 8)) & 0x3f);
+
         s->data = 0;
         tmp = sd_read_data(s->card);
         s->data |= (tmp << 0);
@@ -379,13 +404,41 @@ static uint64_t bcm2835_emmc_read(void *opaque, hwaddr offset,
         s->data |= (tmp << 16);
         tmp = sd_read_data(s->card);
         s->data |= (tmp << 24);
-        if (sd_data_ready(s->card)) {
-            s->interrupt |= SDHCI_INT_DATA_AVAIL;
-        } else {
-            s->interrupt |= SDHCI_INT_DATA_END;
-        }
-        bcm2835_emmc_set_irq(s);
 
+        s->interrupt |= SDHCI_INT_DATA_AVAIL;
+        s->status |= SDHCI_DATA_AVAILABLE;
+
+        s->bytecnt += 4;
+
+        if (s->bytecnt == 512) {
+            s->bytecnt = 0;
+            if (s->cmdtm & SDHCI_TRNS_BLK_CNT_EN) {
+                blkcnt = (s->blksizecnt >> 16) & 0xffff;
+                blkcnt--;
+                s->blksizecnt = (blkcnt << 16) | (s->blksizecnt & 0xffff);
+                if (blkcnt == 0) {
+                    s->interrupt &= ~SDHCI_INT_DATA_AVAIL;
+                    s->status &= ~SDHCI_DATA_AVAILABLE;
+                    
+                    s->interrupt |= SDHCI_INT_DATA_END;
+                    autocmd12(s);
+                }
+            } 
+            if ( !s->acmd && (cmd == 17) ) {
+                // Single read
+                s->interrupt &= ~SDHCI_INT_DATA_AVAIL;
+                s->status &= ~SDHCI_DATA_AVAILABLE;
+                
+                s->interrupt |= SDHCI_INT_DATA_END;                
+            }
+        }
+        if (!sd_data_ready(s->card)) {
+            s->interrupt &= ~SDHCI_INT_DATA_AVAIL;
+            s->status &= ~SDHCI_DATA_AVAILABLE;
+            
+            s->interrupt |= SDHCI_INT_DATA_END;                            
+        }
+        set_irq = 1;
         res = s->data;
         break;
     case SDHCI_PRESENT_STATE:   // STATUS
@@ -431,6 +484,14 @@ static uint64_t bcm2835_emmc_read(void *opaque, hwaddr offset,
         break;
     }
 
+#ifdef LOG_REG_ACCESS
+    if (offset != SDHCI_BUFFER)
+        printf("[QEMU] bcm2835_emmc: read(%x) %08x\n", (int)offset, res);
+#endif
+
+    if (set_irq)
+        bcm2835_emmc_set_irq(s);
+
     return res;
 }
 
@@ -442,9 +503,16 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
     SDRequest request;
     uint8_t response[16];
     int resplen;
+    uint32_t blkcnt;
     
     assert(size == 4);
     
+#ifdef LOG_REG_ACCESS
+    if (offset != SDHCI_BUFFER)
+        printf("[QEMU] bcm2835_emmc: write(%x) %08x\n", (int)offset, 
+            (uint32_t)value);
+#endif
+
     switch(offset) {
     case SDHCI_ARGUMENT2:      // ARG2
         s->arg2 = value;
@@ -458,18 +526,25 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
     case SDHCI_TRANSFER_MODE:   // CMDTM
         s->cmdtm = value;    
         cmd = ((value >> (16 + 8)) & 0x3f);
-
-        if (cmd == 7) {
-            /*request.cmd = 0;
-            request.arg = 0;
-            request.crc = 0;
-            sd_do_command(s->card, &request, response);*/
-        }
         
         request.cmd = cmd;
         request.arg = s->arg1;
         request.crc = 0;
-        
+
+        s->bytecnt = 0;
+
+        s->status &= ~SDHCI_DATA_AVAILABLE;
+        s->status &= ~SDHCI_SPACE_AVAILABLE;
+
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_emmc: starting %sCMD%d %08x ", 
+        (s->acmd ? "A" : ""), cmd, s->arg1);
+    if (s->cmdtm & SDHCI_TRNS_BLK_CNT_EN)
+        printf("BlkCnt ");
+    if (s->cmdtm & SDHCI_TRNS_AUTO_CMD12)
+        printf("Auto-CMD12 ");
+    printf("\n");
+#endif
         resplen = sd_do_command(s->card, &request, response);
         
         if (resplen > 0) {
@@ -480,6 +555,7 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
                     | (response[3] << 0);
                 if (!s->acmd && ( (cmd == 24) || (cmd == 25) ) ) {
                     s->interrupt |= SDHCI_INT_SPACE_AVAIL;
+                    s->status |= SDHCI_SPACE_AVAILABLE;
                 }
             } else if (resplen == 16) {
                 s->resp3 = 0
@@ -511,7 +587,11 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
                 s->interrupt |= SDHCI_INT_DATA_END;
             } else {
                 if (sd_data_ready(s->card)) {
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_emmc: data available\n");
+#endif
                     s->interrupt |= SDHCI_INT_DATA_AVAIL;
+                    s->status |= SDHCI_DATA_AVAILABLE;
                 }
             }
             bcm2835_emmc_set_irq(s);
@@ -526,6 +606,9 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
             if (!s->acmd && (cmd == 0)) {
                 s->interrupt |= SDHCI_INT_RESPONSE;
             }
+            if (!s->acmd && (cmd == 7)) {
+                s->interrupt |= SDHCI_INT_RESPONSE;
+            }
             bcm2835_emmc_set_irq(s);
         }
         if (cmd == 55) {
@@ -535,6 +618,8 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
         }
         break;
     case SDHCI_BUFFER:          // DATA
+        cmd = ((s->cmdtm >> (16 + 8)) & 0x3f);
+        
         s->data = value;
 
         sd_write_data(s->card, (value >> 0) & 0xff);
@@ -543,7 +628,33 @@ static void bcm2835_emmc_write(void *opaque, hwaddr offset,
         sd_write_data(s->card, (value >> 24) & 0xff);
 
         s->interrupt |= SDHCI_INT_SPACE_AVAIL;
+        s->status |= SDHCI_SPACE_AVAILABLE;
 
+        s->bytecnt += 4;
+        
+        if (s->bytecnt == 512) {
+            s->bytecnt = 0;
+            if (s->cmdtm & SDHCI_TRNS_BLK_CNT_EN) {
+                blkcnt = (s->blksizecnt >> 16) & 0xffff;
+                blkcnt--;
+                s->blksizecnt = (blkcnt << 16) | (s->blksizecnt & 0xffff);
+                if (blkcnt == 0) {
+                    s->interrupt &= ~SDHCI_INT_SPACE_AVAIL;
+                    s->status &= ~SDHCI_SPACE_AVAILABLE;
+                    
+                    s->interrupt |= SDHCI_INT_DATA_END;
+                    autocmd12(s);
+                }
+            } 
+            if ( !s->acmd && (cmd == 24) ) {
+                // Single write
+                s->interrupt &= ~SDHCI_INT_SPACE_AVAIL;
+                s->status &= ~SDHCI_SPACE_AVAILABLE;
+                
+                s->interrupt |= SDHCI_INT_DATA_END;                
+            }
+        }
+        bcm2835_emmc_set_irq(s);
         break;
     case SDHCI_HOST_CONTROL:    // CONTROL0
         s->control0 &= ~0x007f0026;
@@ -643,7 +754,7 @@ static int bcm2835_emmc_init(SysBusDevice *dev)
     
     s->acmd = 0;
     s->write_op = 0;
-    
+
     memory_region_init_io(&s->iomem, &bcm2835_emmc_ops, s, 
         "bcm2835_emmc", 0x100000);
     sysbus_init_mmio(dev, &s->iomem);

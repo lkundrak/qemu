@@ -48,6 +48,9 @@
 
 #define BCM2708_DMA_TDMODE_LEN(w, h) ((h) << 16 | (w))
 
+
+//#define LOG_REG_ACCESS
+
 typedef struct {
     uint32_t cs;
     uint32_t conblk_ad;
@@ -114,6 +117,7 @@ static void bcm2835_dma_update(bcm2835_dma_state *s, int c)
             }
             ch->txfr_len -= 4;
         }
+                
         ch->cs |= BCM2708_DMA_END;
         if (ch->ti & BCM2708_DMA_INT_EN) {
             ch->cs |= BCM2708_DMA_INT;
@@ -132,6 +136,8 @@ static uint64_t bcm2835_dma_read(bcm2835_dma_state *s, hwaddr offset,
 {
     dmachan *ch = &s->chan[c];
     uint32_t res = 0;
+
+    assert(size == 4);
     
     switch(offset) {
     case 0x0:
@@ -167,6 +173,10 @@ static uint64_t bcm2835_dma_read(bcm2835_dma_state *s, hwaddr offset,
         break;
     }
 
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_dma[%d]: read(%x) %08x\n", c, (int)offset, res);
+#endif
+
     return res;
 }
 
@@ -175,6 +185,13 @@ static void bcm2835_dma_write(bcm2835_dma_state *s, hwaddr offset,
 {
     dmachan *ch = &s->chan[c];
     uint32_t oldcs = ch->cs; 
+
+    assert(size == 4);
+
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_dma[%d]: write(%x) %08x\n", c, 
+        (int)offset, (uint32_t)value);
+#endif
     
     switch(offset) {
     case 0x0:

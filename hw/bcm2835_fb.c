@@ -77,6 +77,13 @@ static void draw_line_src16(void *opaque, uint8_t *d, const uint8_t *s,
 
     while (width--) {
         switch(bcm2835_fb.bpp) {
+        case 8:
+            rgb888 = ldl_phys( bcm2835_vcram_base + (*s << 2) );
+            r = (rgb888 >> 0) & 0xff;
+            g = (rgb888 >> 8) & 0xff;
+            b = (rgb888 >> 16) & 0xff;            
+            s++;
+            break;
         case 16:
             rgb565 = lduw_raw(s);
             r = ((rgb565 >> 11) & 0x1f) << 3;
@@ -86,9 +93,9 @@ static void draw_line_src16(void *opaque, uint8_t *d, const uint8_t *s,
             break;
         case 32:
             rgb888 = ldl_raw(s);
-            r = rgb888 >> 24;
-            g = rgb888 >> 16;
-            b = rgb888 >> 8;
+            r = (rgb888 >> 0) & 0xff;
+            g = (rgb888 >> 8) & 0xff;
+            b = (rgb888 >> 16) & 0xff;
             s += 4;
             break;
         default:
@@ -204,7 +211,8 @@ static void bcm2835_fb_mbox_push(bcm2835_fb_state *s, uint32_t value)
     bcm2835_fb.yoffset = ldl_phys(value + 28);
     
     bcm2835_fb.base = bcm2835_vcram_base | (value & 0xc0000000);
-
+    bcm2835_fb.base += BCM2835_FB_OFFSET;
+    
     // TODO - Manage properly virtual resolution
 
     bcm2835_fb.pitch = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);

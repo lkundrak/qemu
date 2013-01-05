@@ -7,7 +7,7 @@
 #include "qemu-common.h"
 #include "qdev.h"
 
-#define LOG_UNMAPPED_ACCESS
+//#define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;
@@ -17,17 +17,21 @@ typedef struct {
 static uint64_t bcm2835_todo_read(void *opaque, hwaddr offset,
     unsigned size)
 {
-#ifdef LOG_UNMAPPED_ACCESS
-    printf("bcm2835: unmapped read(%x)\n", (int)offset);
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835: unmapped read(%x)\n", (int)offset);
 #endif
+    // "Unlocks" RiscOS boot
+    if (offset == 0x980010)
+        return 0xffffffff;
+    
     return 0;
 }
 
 static void bcm2835_todo_write(void *opaque, hwaddr offset,
     uint64_t value, unsigned size)
 {
-#ifdef LOG_UNMAPPED_ACCESS
-    printf("bcm2835: unmapped write(%x) %llx\n", (int)offset, value);
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835: unmapped write(%x) %llx\n", (int)offset, value);
 #endif
 }
 
