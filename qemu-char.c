@@ -772,6 +772,10 @@ static CharDriverState *qemu_chr_open_stdio(QemuOpts *opts)
     if (stdio_nb_clients >= STDIO_MAX_CLIENTS) {
         return NULL;
     }
+    if (is_daemonized()) {
+        error_report("cannot use stdio with -daemonize");
+        return NULL;
+    }
     if (stdio_nb_clients == 0) {
         old_fd0_flags = fcntl(0, F_GETFL);
         tcgetattr (0, &oldtty);
@@ -1008,10 +1012,11 @@ static CharDriverState *qemu_chr_open_pty(QemuOpts *opts)
     qemu_opt_set(opts, "path", q_ptsname(master_fd));
 
     label = qemu_opts_id(opts);
-    fprintf(stderr, "char device%s%s redirected to %s\n",
-            label ? " " : "",
-            label ?: "",
-            q_ptsname(master_fd));
+    fprintf(stderr, "char device redirected to %s%s%s%s\n",
+            q_ptsname(master_fd),
+            label ? " (label " : "",
+            label ? label      : "",
+            label ? ")"        : "");
 
     s = g_malloc0(sizeof(PtyCharDriver));
     chr->opaque = s;
