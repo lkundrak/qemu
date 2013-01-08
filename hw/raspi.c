@@ -86,9 +86,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     MemoryRegion *per_emmc_bus = g_new(MemoryRegion, 1);
     MemoryRegion *per_dma1_bus = g_new(MemoryRegion, 1);
     MemoryRegion *per_dma2_bus = g_new(MemoryRegion, 1);
-    
-    // TEMP - debug
-    MemoryRegion *ua = g_new(MemoryRegion, 1);
+    MemoryRegion *per_timer_bus = g_new(MemoryRegion, 1);
     
     MemoryRegion *mr;
     
@@ -107,11 +105,6 @@ static void raspi_init(QEMUMachineInitArgs *args)
         exit(1);
     }
     
-    // TEMP - debug
-    memory_region_init_ram(ua, "ua.ram", 0x1000);
-    vmstate_register_ram_global(ua);
-    memory_region_add_subregion(sysmem, 0xfe800000, ua);
-
     bcm2835_vcram_base = args->ram_size - VCRAM_SIZE;
     
     bcm2835_ram = g_new(MemoryRegion, 1);
@@ -181,6 +174,15 @@ static void raspi_init(QEMUMachineInitArgs *args)
     memory_region_add_subregion(sysmem, BUS_ADDR(ST_BASE), 
         per_st_bus);
         
+    // ARM timer
+    dev = sysbus_create_simple("bcm2835_timer", ARMCTRL_TIMER0_1_BASE, 
+        pic[INTERRUPT_ARM_TIMER]);
+    s = sysbus_from_qdev(dev);
+    mr = sysbus_mmio_get_region(s, 0);
+    memory_region_init_alias(per_timer_bus, NULL, mr, 
+        0, memory_region_size(mr));
+    memory_region_add_subregion(sysmem, BUS_ADDR(ARMCTRL_TIMER0_1_BASE), 
+        per_timer_bus);
     
     // Semaphores / Doorbells / Mailboxes
     dev = sysbus_create_simple("bcm2835_sbm", ARMCTRL_0_SBM_BASE, 

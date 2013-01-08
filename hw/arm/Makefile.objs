@@ -32,7 +32,8 @@ obj-y += imx_serial.o imx_ccm.o imx_timer.o imx_avic.o
 obj-y += kzm.o
 obj-y += raspi.o bcm2835_ic.o bcm2835_st.o bcm2835_sbm.o bcm2835_power.o \
                 bcm2835_fb.o bcm2835_property.o bcm2835_vchiq.o \
-                bcm2835_emmc.o bcm2835_dma.o bcm2835_todo.o
+                bcm2835_emmc.o bcm2835_dma.o bcm2835_timer.o \
+                bcm2835_todo.o
 obj-$(CONFIG_FDT) += ../device_tree.o
 
 obj-y := $(addprefix ../,$(obj-y))

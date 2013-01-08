@@ -10,6 +10,8 @@
 #include "qemu-common.h"
 #include "qdev.h"
 
+// #define LOG_REG_ACCESS
+
 typedef struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
@@ -63,12 +65,17 @@ static uint64_t bcm2835_st_read(void *opaque, hwaddr offset,
     uint32_t res = 0;
     int64_t now = qemu_get_clock_ns(vm_clock) / SCALE_US;
     
+    assert(size == 4);
+    
     switch(offset) {
     case 0x00:
         res = s->match;
         break;
     case 0x04:
         res = (uint32_t)now;
+        // Ugly temporary hack to get Plan9 to boot...
+        // see http://plan9.bell-labs.com/sources/contrib/miller/rpi/sys/src/9/bcm/clock.c
+        // res = (now / 10000) * 10000;
         break;
     case 0x08:
         res = (now >> 32);
@@ -91,6 +98,10 @@ static uint64_t bcm2835_st_read(void *opaque, hwaddr offset,
         return 0;
     }
 
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_st: read(%x) %08x\n", (int)offset, res);
+#endif
+
     return res;
 }
 
@@ -99,7 +110,15 @@ static void bcm2835_st_write(void *opaque, hwaddr offset,
 {
     bcm2835_st_state *s = (bcm2835_st_state *)opaque;
     int i;
-        
+
+    assert(size == 4);
+
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_st: write(%x) %08x\n", (int)offset, 
+        (uint32_t)value);
+#endif
+
+
     switch(offset) {
     case 0x00:
         s->match &= ~value & 0x0f;
