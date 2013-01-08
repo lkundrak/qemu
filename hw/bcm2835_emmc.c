@@ -289,7 +289,7 @@
 #define MMC_CAP2_FORCE_MULTIBLOCK (1 << 4)  /* Always use multiblock transfers */
 
 
-//#define LOG_REG_ACCESS
+#define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;

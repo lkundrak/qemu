@@ -290,8 +290,24 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     
     s->pending = 0;
     
-    bcm2835_fb.invalidate = 0;
-    bcm2835_fb.xres = 0;
+    //bcm2835_fb.invalidate = 0;
+    //bcm2835_fb.xres = 0;
+    bcm2835_fb.xres = 1024;
+    bcm2835_fb.yres = 768;
+    bcm2835_fb.xres_virtual = 1024;
+    bcm2835_fb.yres_virtual = 768;
+    
+    bcm2835_fb.bpp = 16;
+    bcm2835_fb.xoffset = 0;
+    bcm2835_fb.yoffset = 0;
+    
+    bcm2835_fb.base = bcm2835_vcram_base;
+    bcm2835_fb.base += BCM2835_FB_OFFSET;
+    
+    bcm2835_fb.pitch = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
+    bcm2835_fb.size = bcm2835_fb.yres * bcm2835_fb.pitch;
+
+    bcm2835_fb.invalidate = 1;
         
     sysbus_init_irq(dev, &s->mbox_irq);
     

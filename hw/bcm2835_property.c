@@ -12,7 +12,7 @@
 
 #include "bcm2835_common.h"
 
-//#define LOG_REG_ACCESS
+#define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;
@@ -84,6 +84,7 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
         case 0x00000000: // End tag
             break;
         case 0x00000001: // Get firmware revision
+            stl_phys(value + 12, 346337);
             resplen = 4;
             break;
 
