@@ -182,7 +182,7 @@ static void bcm2835_timer_write(void *opaque, hwaddr offset,
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
-            "bcm2835_timer_read: Bad offset %x\n", (int)offset);
+            "bcm2835_timer_write: Bad offset %x\n", (int)offset);
         return;        
     }
 }
