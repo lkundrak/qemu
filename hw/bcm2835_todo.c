@@ -7,7 +7,7 @@
 #include "qemu-common.h"
 #include "qdev.h"
 
-#define LOG_REG_ACCESS
+// #define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;

@@ -69,8 +69,9 @@ static void raspi_init(QEMUMachineInitArgs *args)
     ARMCPU *cpu;
     MemoryRegion *sysmem = get_system_memory();
 
-    MemoryRegion *bcm2835_vcram;
-    MemoryRegion *bcm2835_ram; 
+    MemoryRegion *bcm2835_ram = g_new(MemoryRegion, 1);
+    MemoryRegion *bcm2835_vcram = g_new(MemoryRegion, 1);
+    
     MemoryRegion *ram_alias = g_new(MemoryRegion, 4);
     MemoryRegion *vcram_alias = g_new(MemoryRegion, 4);
     
@@ -87,6 +88,8 @@ static void raspi_init(QEMUMachineInitArgs *args)
     MemoryRegion *per_dma1_bus = g_new(MemoryRegion, 1);
     MemoryRegion *per_dma2_bus = g_new(MemoryRegion, 1);
     MemoryRegion *per_timer_bus = g_new(MemoryRegion, 1);
+    MemoryRegion *per_usb_bus = g_new(MemoryRegion, 1);
+    MemoryRegion *per_mphi_bus = g_new(MemoryRegion, 1);
     
     MemoryRegion *mr;
     
@@ -107,11 +110,9 @@ static void raspi_init(QEMUMachineInitArgs *args)
     
     bcm2835_vcram_base = args->ram_size - VCRAM_SIZE;
     
-    bcm2835_ram = g_new(MemoryRegion, 1);
     memory_region_init_ram(bcm2835_ram, "raspi.ram", bcm2835_vcram_base);
     vmstate_register_ram_global(bcm2835_ram);
 
-    bcm2835_vcram = g_new(MemoryRegion, 1);
     memory_region_init_ram(bcm2835_vcram, "vcram.ram", VCRAM_SIZE);
     vmstate_register_ram_global(bcm2835_vcram);
     
@@ -183,6 +184,27 @@ static void raspi_init(QEMUMachineInitArgs *args)
         0, memory_region_size(mr));
     memory_region_add_subregion(sysmem, BUS_ADDR(ARMCTRL_TIMER0_1_BASE), 
         per_timer_bus);
+
+    // USB controller
+    dev = sysbus_create_simple("bcm2835_usb", USB_BASE, 
+        pic[INTERRUPT_VC_USB]);
+    s = sysbus_from_qdev(dev);
+    mr = sysbus_mmio_get_region(s, 0);
+    memory_region_init_alias(per_usb_bus, NULL, mr, 
+        0, memory_region_size(mr));
+    memory_region_add_subregion(sysmem, BUS_ADDR(USB_BASE), 
+        per_usb_bus);
+
+    // MPHI - Message-based Parallel Host Interface
+    dev = sysbus_create_simple("bcm2835_mphi", MPHI_BASE, 
+        pic[INTERRUPT_HOSTPORT]);
+    s = sysbus_from_qdev(dev);
+    mr = sysbus_mmio_get_region(s, 0);
+    memory_region_init_alias(per_mphi_bus, NULL, mr, 
+        0, memory_region_size(mr));
+    memory_region_add_subregion(sysmem, BUS_ADDR(MPHI_BASE), 
+        per_mphi_bus);
+
     
     // Semaphores / Doorbells / Mailboxes
     dev = sysbus_create_simple("bcm2835_sbm", ARMCTRL_0_SBM_BASE, 
