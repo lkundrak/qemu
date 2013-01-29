@@ -158,6 +158,7 @@ vnc_tls=""
 vnc_sasl=""
 vnc_jpeg=""
 vnc_png=""
+vnc_ws=""
 xen=""
 xen_ctrl_version=""
 xen_pci_passthrough=""
@@ -214,7 +215,6 @@ trace_backend="nop"
 trace_file="trace"
 spice=""
 rbd=""
-smartcard=""
 smartcard_nss=""
 usb_redir=""
 opengl=""
@@ -240,8 +240,10 @@ for opt do
   --cpu=*) cpu="$optarg"
   ;;
   --extra-cflags=*) QEMU_CFLAGS="$optarg $QEMU_CFLAGS"
+                    EXTRA_CFLAGS="$optarg"
   ;;
   --extra-ldflags=*) LDFLAGS="$optarg $LDFLAGS"
+                     EXTRA_LDFLAGS="$optarg"
   ;;
   --enable-debug-info) debug_info="yes"
   ;;
@@ -264,6 +266,8 @@ else
 fi
 
 ar="${AR-${cross_prefix}ar}"
+as="${AS-${cross_prefix}as}"
+cpp="${CPP-$cc -E}"
 objcopy="${OBJCOPY-${cross_prefix}objcopy}"
 ld="${LD-${cross_prefix}ld}"
 libtool="${LIBTOOL-${cross_prefix}libtool}"
@@ -721,6 +725,10 @@ for opt do
   ;;
   --enable-vnc-png) vnc_png="yes"
   ;;
+  --disable-vnc-ws) vnc_ws="no"
+  ;;
+  --enable-vnc-ws) vnc_ws="yes"
+  ;;
   --disable-slirp) slirp="no"
   ;;
   --disable-uuid) uuid="no"
@@ -858,10 +866,6 @@ for opt do
   --disable-xfsctl) xfs="no"
   ;;
   --enable-xfsctl) xfs="yes"
-  ;;
-  --disable-smartcard) smartcard="no"
-  ;;
-  --enable-smartcard) smartcard="yes"
   ;;
   --disable-smartcard-nss) smartcard_nss="no"
   ;;
@@ -1070,6 +1074,8 @@ echo "  --disable-vnc-jpeg       disable JPEG lossy compression for VNC server"
 echo "  --enable-vnc-jpeg        enable JPEG lossy compression for VNC server"
 echo "  --disable-vnc-png        disable PNG compression for VNC server (default)"
 echo "  --enable-vnc-png         enable PNG compression for VNC server"
+echo "  --disable-vnc-ws         disable Websockets support for VNC server"
+echo "  --enable-vnc-ws          enable Websockets support for VNC server"
 echo "  --disable-curses         disable curses output"
 echo "  --enable-curses          enable curses output"
 echo "  --disable-curl           disable curl connectivity"
@@ -1126,8 +1132,6 @@ echo "  --enable-spice           enable spice"
 echo "  --enable-rbd             enable building the rados block device (rbd)"
 echo "  --disable-libiscsi       disable iscsi support"
 echo "  --enable-libiscsi        enable iscsi support"
-echo "  --disable-smartcard      disable smartcard support"
-echo "  --enable-smartcard       enable smartcard support"
 echo "  --disable-smartcard-nss  disable smartcard nss support"
 echo "  --enable-smartcard-nss   enable smartcard nss support"
 echo "  --disable-usb-redir      disable usb network redirection support"
@@ -1430,7 +1434,7 @@ fi
 
 if test "$seccomp" != "no" ; then
     if $pkg_config --atleast-version=1.0.0 libseccomp --modversion >/dev/null 2>&1; then
-        LIBS=`$pkg_config --libs libseccomp`
+        libs_softmmu="$libs_softmmu `$pkg_config --libs libseccomp`"
 	seccomp="yes"
     else
 	if test "$seccomp" = "yes"; then
@@ -1715,8 +1719,8 @@ EOF
 fi
 
 ##########################################
-# VNC TLS detection
-if test "$vnc" = "yes" -a "$vnc_tls" != "no" ; then
+# VNC TLS/WS detection
+if test "$vnc" = "yes" -a \( "$vnc_tls" != "no" -o "$vnc_ws" != "no" \) ; then
   cat > $TMPC <<EOF
 #include <gnutls/gnutls.h>
 int main(void) { gnutls_session_t s; gnutls_init(&s, GNUTLS_SERVER); return 0; }
@@ -1724,14 +1728,23 @@ EOF
   vnc_tls_cflags=`$pkg_config --cflags gnutls 2> /dev/null`
   vnc_tls_libs=`$pkg_config --libs gnutls 2> /dev/null`
   if compile_prog "$vnc_tls_cflags" "$vnc_tls_libs" ; then
-    vnc_tls=yes
+    if test "$vnc_tls" != "no" ; then
+      vnc_tls=yes
+    fi
+    if test "$vnc_ws" != "no" ; then
+      vnc_ws=yes
+    fi
     libs_softmmu="$vnc_tls_libs $libs_softmmu"
     QEMU_CFLAGS="$QEMU_CFLAGS $vnc_tls_cflags"
   else
     if test "$vnc_tls" = "yes" ; then
       feature_not_found "vnc-tls"
     fi
+    if test "$vnc_ws" = "yes" ; then
+      feature_not_found "vnc-ws"
+    fi
     vnc_tls=no
+    vnc_ws=no
   fi
 fi
 
@@ -2042,7 +2055,7 @@ fi
 if test "$mingw32" = "yes" ; then
     curses_list="-lpdcurses"
 else
-    curses_list="-lncurses -lcurses"
+    curses_list="-lncurses:-lcurses:$($pkg_config --libs ncurses 2>/dev/null)"
 fi
 
 if test "$curses" != "no" ; then
@@ -2055,13 +2068,16 @@ int main(void) {
   return s != 0;
 }
 EOF
+  IFS=:
   for curses_lib in $curses_list; do
+    unset IFS
     if compile_prog "" "$curses_lib" ; then
       curses_found=yes
       libs_softmmu="$curses_lib $libs_softmmu"
       break
     fi
   done
+  unset IFS
   if test "$curses_found" = "yes" ; then
     curses=yes
   else
@@ -2584,6 +2600,22 @@ if compile_prog "" "" ; then
   fallocate=yes
 fi
 
+# check for fallocate hole punching
+fallocate_punch_hole=no
+cat > $TMPC << EOF
+#include <fcntl.h>
+#include <linux/falloc.h>
+
+int main(void)
+{
+    fallocate(0, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, 0);
+    return 0;
+}
+EOF
+if compile_prog "" "" ; then
+  fallocate_punch_hole=yes
+fi
+
 # check for sync_file_range
 sync_file_range=no
 cat > $TMPC << EOF
@@ -2705,7 +2737,7 @@ if compile_prog "" "" ; then
   byteswap_h=yes
 fi
 
-# Search for bswap_32 function
+# Search for bswap32 function
 bswap_h=no
 cat > $TMPC << EOF
 #include <sys/endian.h>
@@ -2811,42 +2843,37 @@ EOF
 fi
 
 # check for libcacard for smartcard support
-if test "$smartcard" != "no" ; then
-    smartcard="yes"
-    smartcard_cflags=""
-    # TODO - what's the minimal nss version we support?
-    if test "$smartcard_nss" != "no"; then
-      cat > $TMPC << EOF
+smartcard_cflags=""
+# TODO - what's the minimal nss version we support?
+if test "$smartcard_nss" != "no"; then
+  cat > $TMPC << EOF
 #include <pk11pub.h>
 int main(void) { PK11_FreeSlot(0); return 0; }
 EOF
-        smartcard_includes="-I\$(SRC_PATH)/libcacard"
-        libcacard_libs="$($pkg_config --libs nss 2>/dev/null) $glib_libs"
-        libcacard_cflags="$($pkg_config --cflags nss 2>/dev/null) $glib_cflags"
-        test_cflags="$libcacard_cflags"
-        # The header files in nss < 3.13.3 have a bug which causes them to
-        # emit a warning. If we're going to compile QEMU with -Werror, then
-        # test that the headers don't have this bug. Otherwise we would pass
-        # the configure test but fail to compile QEMU later.
-        if test "$werror" = "yes"; then
-            test_cflags="-Werror $test_cflags"
-        fi
-        if $pkg_config --atleast-version=3.12.8 nss >/dev/null 2>&1 && \
-          compile_prog "$test_cflags" "$libcacard_libs"; then
-            smartcard_nss="yes"
-            QEMU_CFLAGS="$QEMU_CFLAGS $libcacard_cflags"
-            QEMU_INCLUDES="$QEMU_INCLUDES $smartcard_includes"
-            libs_softmmu="$libcacard_libs $libs_softmmu"
-        else
-            if test "$smartcard_nss" = "yes"; then
-                feature_not_found "nss"
-            fi
-            smartcard_nss="no"
-        fi
+    smartcard_includes="-I\$(SRC_PATH)/libcacard"
+    libcacard_libs="$($pkg_config --libs nss 2>/dev/null) $glib_libs"
+    libcacard_cflags="$($pkg_config --cflags nss 2>/dev/null) $glib_cflags"
+    test_cflags="$libcacard_cflags"
+    # The header files in nss < 3.13.3 have a bug which causes them to
+    # emit a warning. If we're going to compile QEMU with -Werror, then
+    # test that the headers don't have this bug. Otherwise we would pass
+    # the configure test but fail to compile QEMU later.
+    if test "$werror" = "yes"; then
+        test_cflags="-Werror $test_cflags"
     fi
-fi
-if test "$smartcard" = "no" ; then
-    smartcard_nss="no"
+    if test -n "$libtool" &&
+            $pkg_config --atleast-version=3.12.8 nss >/dev/null 2>&1 && \
+      compile_prog "$test_cflags" "$libcacard_libs"; then
+        smartcard_nss="yes"
+        QEMU_CFLAGS="$QEMU_CFLAGS $libcacard_cflags"
+        QEMU_INCLUDES="$QEMU_INCLUDES $smartcard_includes"
+        libs_softmmu="$libcacard_libs $libs_softmmu"
+    else
+        if test "$smartcard_nss" = "yes"; then
+            feature_not_found "nss"
+        fi
+        smartcard_nss="no"
+    fi
 fi
 
 # check for usbredirparser for usb network redirection support
@@ -3076,7 +3103,7 @@ int main(void) {
 }
 EOF
 if compile_prog "-Werror" "" ; then
-    pragma_disable_unused_but_set=yes
+    pragma_diagnostic_available=yes
 fi
 
 ########################################
@@ -3201,9 +3228,6 @@ if test "$softmmu" = yes ; then
       tools="qemu-ga\$(EXESUF) $tools"
     fi
   fi
-  if test "$smartcard_nss" = "yes" ; then
-    tools="vscclient\$(EXESUF) $tools"
-  fi
 fi
 
 # Mac OS X ships with a broken assembler
@@ -3275,6 +3299,7 @@ if test "$vnc" = "yes" ; then
     echo "VNC SASL support  $vnc_sasl"
     echo "VNC JPEG support  $vnc_jpeg"
     echo "VNC PNG support   $vnc_png"
+    echo "VNC WS support    $vnc_ws"
 fi
 if test -n "$sparc_cpu"; then
     echo "Target Sparc Arch $sparc_cpu"
@@ -3347,6 +3372,8 @@ echo "qemu_datadir=$qemu_datadir" >> $config_host_mak
 echo "qemu_docdir=$qemu_docdir" >> $config_host_mak
 echo "qemu_localstatedir=$local_statedir" >> $config_host_mak
 echo "qemu_helperdir=$libexecdir" >> $config_host_mak
+echo "extra_cflags=$EXTRA_CFLAGS" >> $config_host_mak
+echo "extra_ldflags=$EXTRA_LDFLAGS" >> $config_host_mak
 
 echo "ARCH=$ARCH" >> $config_host_mak
 if test "$debug_tcg" = "yes" ; then
@@ -3451,6 +3478,10 @@ fi
 if test "$vnc_png" = "yes" ; then
   echo "CONFIG_VNC_PNG=y" >> $config_host_mak
 fi
+if test "$vnc_ws" = "yes" ; then
+  echo "CONFIG_VNC_WS=y" >> $config_host_mak
+  echo "VNC_WS_CFLAGS=$vnc_ws_cflags" >> $config_host_mak
+fi
 if test "$fnmatch" = "yes" ; then
   echo "CONFIG_FNMATCH=y" >> $config_host_mak
 fi
@@ -3498,6 +3529,9 @@ if test "$eventfd" = "yes" ; then
 fi
 if test "$fallocate" = "yes" ; then
   echo "CONFIG_FALLOCATE=y" >> $config_host_mak
+fi
+if test "$fallocate_punch_hole" = "yes" ; then
+  echo "CONFIG_FALLOCATE_PUNCH_HOLE=y" >> $config_host_mak
 fi
 if test "$sync_file_range" = "yes" ; then
   echo "CONFIG_SYNC_FILE_RANGE=y" >> $config_host_mak
@@ -3592,10 +3626,6 @@ if test "$spice" = "yes" ; then
   echo "CONFIG_SPICE=y" >> $config_host_mak
 fi
 
-if test "$smartcard" = "yes" ; then
-  echo "CONFIG_SMARTCARD=y" >> $config_host_mak
-fi
-
 if test "$smartcard_nss" = "yes" ; then
   echo "CONFIG_SMARTCARD_NSS=y" >> $config_host_mak
   echo "libcacard_libs=$libcacard_libs" >> $config_host_mak
@@ -3646,8 +3676,8 @@ if test "$linux_magic_h" = "yes" ; then
   echo "CONFIG_LINUX_MAGIC_H=y" >> $config_host_mak
 fi
 
-if test "$pragma_disable_unused_but_set" = "yes" ; then
-  echo "CONFIG_PRAGMA_DISABLE_UNUSED_BUT_SET=y" >> $config_host_mak
+if test "$pragma_diagnostic_available" = "yes" ; then
+  echo "CONFIG_PRAGMA_DIAGNOSTIC_AVAILABLE=y" >> $config_host_mak
 fi
 
 if test "$valgrind_h" = "yes" ; then
@@ -3719,13 +3749,21 @@ echo "MAKE=$make" >> $config_host_mak
 echo "INSTALL=$install" >> $config_host_mak
 echo "INSTALL_DIR=$install -d -m 0755" >> $config_host_mak
 echo "INSTALL_DATA=$install -c -m 0644" >> $config_host_mak
-echo "INSTALL_PROG=$install -c -m 0755" >> $config_host_mak
+if test -n "$libtool"; then
+  echo "INSTALL_PROG=\$(LIBTOOL) --mode=install $install -c -m 0755" >> $config_host_mak
+  echo "INSTALL_LIB=\$(LIBTOOL) --mode=install $install -c -m 0644" >> $config_host_mak
+else
+  echo "INSTALL_PROG=$install -c -m 0755" >> $config_host_mak
+  echo "INSTALL_LIB=$install -c -m 0644" >> $config_host_mak
+fi
 echo "PYTHON=$python" >> $config_host_mak
 echo "CC=$cc" >> $config_host_mak
 echo "CC_I386=$cc_i386" >> $config_host_mak
 echo "HOST_CC=$host_cc" >> $config_host_mak
 echo "OBJCC=$objcc" >> $config_host_mak
 echo "AR=$ar" >> $config_host_mak
+echo "AS=$as" >> $config_host_mak
+echo "CPP=$cpp" >> $config_host_mak
 echo "OBJCOPY=$objcopy" >> $config_host_mak
 echo "LD=$ld" >> $config_host_mak
 echo "WINDRES=$windres" >> $config_host_mak
@@ -4045,9 +4083,6 @@ fi
 if test "$target_softmmu" = "yes" ; then
   echo "CONFIG_SOFTMMU=y" >> $config_target_mak
   echo "LIBS+=$libs_softmmu $target_libs_softmmu" >> $config_target_mak
-  if test "$smartcard_nss" = "yes" ; then
-    echo "subdir-$target: subdir-libcacard" >> $config_host_mak
-  fi
   case "$target_arch2" in
     i386|x86_64)
       echo "CONFIG_HAVE_CORE_DUMP=y" >> $config_target_mak
@@ -4248,10 +4283,9 @@ DIRS="tests tests/tcg tests/tcg/cris tests/tcg/lm32"
 DIRS="$DIRS pc-bios/optionrom pc-bios/spapr-rtas"
 DIRS="$DIRS roms/seabios roms/vgabios"
 DIRS="$DIRS qapi-generated"
-DIRS="$DIRS libcacard libcacard/libcacard libcacard/trace"
 FILES="Makefile tests/tcg/Makefile qdict-test-data.txt"
 FILES="$FILES tests/tcg/cris/Makefile tests/tcg/cris/.gdbinit"
-FILES="$FILES tests/tcg/lm32/Makefile libcacard/Makefile"
+FILES="$FILES tests/tcg/lm32/Makefile"
 FILES="$FILES pc-bios/optionrom/Makefile pc-bios/keymaps"
 FILES="$FILES pc-bios/spapr-rtas/Makefile"
 FILES="$FILES roms/seabios/Makefile roms/vgabios/Makefile"
@@ -4277,9 +4311,10 @@ for rom in seabios vgabios ; do
     config_mak=roms/$rom/config.mak
     echo "# Automatically generated by configure - do not modify" > $config_mak
     echo "SRC_PATH=$source_path/roms/$rom" >> $config_mak
+    echo "AS=$as" >> $config_mak
     echo "CC=$cc" >> $config_mak
     echo "BCC=bcc" >> $config_mak
-    echo "CPP=${cross_prefix}cpp" >> $config_mak
+    echo "CPP=$cpp" >> $config_mak
     echo "OBJCOPY=objcopy" >> $config_mak
     echo "IASL=iasl" >> $config_mak
     echo "LD=$ld" >> $config_mak

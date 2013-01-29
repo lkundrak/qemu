@@ -39,7 +39,8 @@ static const uint8_t gic_id[] = {
 static inline int gic_get_current_cpu(GICState *s)
 {
     if (s->num_cpu > 1) {
-        return cpu_single_env->cpu_index;
+        CPUState *cpu = ENV_GET_CPU(cpu_single_env);
+        return cpu->cpu_index;
     }
     return 0;
 }
@@ -703,7 +704,7 @@ static void arm_gic_class_init(ObjectClass *klass, void *data)
     dc->no_user = 1;
 }
 
-static TypeInfo arm_gic_info = {
+static const TypeInfo arm_gic_info = {
     .name = TYPE_ARM_GIC,
     .parent = TYPE_ARM_GIC_COMMON,
     .instance_size = sizeof(GICState),

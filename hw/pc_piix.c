@@ -235,10 +235,18 @@ static void pc_init_pci(QEMUMachineInitArgs *args)
 
 static void pc_init_pci_1_3(QEMUMachineInitArgs *args)
 {
-    enable_kvm_pv_eoi();
+    enable_compat_apic_id_mode();
     pc_init_pci(args);
 }
 
+/* PC machine init function for pc-0.14 to pc-1.2 */
+static void pc_init_pci_1_2(QEMUMachineInitArgs *args)
+{
+    disable_kvm_pv_eoi();
+    pc_init_pci_1_3(args);
+}
+
+/* PC init function for pc-0.10 to pc-0.13, and reused by xenfv */
 static void pc_init_pci_no_kvmclock(QEMUMachineInitArgs *args)
 {
     ram_addr_t ram_size = args->ram_size;
@@ -247,6 +255,8 @@ static void pc_init_pci_no_kvmclock(QEMUMachineInitArgs *args)
     const char *kernel_cmdline = args->kernel_cmdline;
     const char *initrd_filename = args->initrd_filename;
     const char *boot_device = args->boot_device;
+    disable_kvm_pv_eoi();
+    enable_compat_apic_id_mode();
     pc_init1(get_system_memory(),
              get_system_io(),
              ram_size, boot_device,
@@ -264,6 +274,8 @@ static void pc_init_isa(QEMUMachineInitArgs *args)
     const char *boot_device = args->boot_device;
     if (cpu_model == NULL)
         cpu_model = "486";
+    disable_kvm_pv_eoi();
+    enable_compat_apic_id_mode();
     pc_init1(get_system_memory(),
              get_system_io(),
              ram_size, boot_device,
@@ -282,13 +294,14 @@ static void pc_xen_hvm_init(QEMUMachineInitArgs *args)
 }
 #endif
 
-static QEMUMachine pc_machine_v1_4 = {
-    .name = "pc-1.4",
+static QEMUMachine pc_i440fx_machine_v1_4 = {
+    .name = "pc-i440fx-1.4",
     .alias = "pc",
-    .desc = "Standard PC",
-    .init = pc_init_pci_1_3,
+    .desc = "Standard PC (i440FX + PIIX, 1996)",
+    .init = pc_init_pci,
     .max_cpus = 255,
     .is_default = 1,
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_1_3 \
@@ -307,6 +320,7 @@ static QEMUMachine pc_machine_v1_3 = {
         PC_COMPAT_1_3,
         { /* end of list */ }
     },
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_1_2 \
@@ -340,12 +354,13 @@ static QEMUMachine pc_machine_v1_3 = {
 static QEMUMachine pc_machine_v1_2 = {
     .name = "pc-1.2",
     .desc = "Standard PC",
-    .init = pc_init_pci,
+    .init = pc_init_pci_1_2,
     .max_cpus = 255,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_2,
         { /* end of list */ }
     },
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_1_1 \
@@ -383,12 +398,13 @@ static QEMUMachine pc_machine_v1_2 = {
 static QEMUMachine pc_machine_v1_1 = {
     .name = "pc-1.1",
     .desc = "Standard PC",
-    .init = pc_init_pci,
+    .init = pc_init_pci_1_2,
     .max_cpus = 255,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_1,
         { /* end of list */ }
     },
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_1_0 \
@@ -418,13 +434,14 @@ static QEMUMachine pc_machine_v1_1 = {
 static QEMUMachine pc_machine_v1_0 = {
     .name = "pc-1.0",
     .desc = "Standard PC",
-    .init = pc_init_pci,
+    .init = pc_init_pci_1_2,
     .max_cpus = 255,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_0,
         { /* end of list */ }
     },
     .hw_version = "1.0",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_0_15 \
@@ -433,13 +450,14 @@ static QEMUMachine pc_machine_v1_0 = {
 static QEMUMachine pc_machine_v0_15 = {
     .name = "pc-0.15",
     .desc = "Standard PC",
-    .init = pc_init_pci,
+    .init = pc_init_pci_1_2,
     .max_cpus = 255,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_15,
         { /* end of list */ }
     },
     .hw_version = "0.15",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_0_14 \
@@ -465,7 +483,7 @@ static QEMUMachine pc_machine_v0_15 = {
 static QEMUMachine pc_machine_v0_14 = {
     .name = "pc-0.14",
     .desc = "Standard PC",
-    .init = pc_init_pci,
+    .init = pc_init_pci_1_2,
     .max_cpus = 255,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_14, 
@@ -481,6 +499,7 @@ static QEMUMachine pc_machine_v0_14 = {
         { /* end of list */ }
     },
     .hw_version = "0.14",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_0_13 \
@@ -518,6 +537,7 @@ static QEMUMachine pc_machine_v0_13 = {
         { /* end of list */ }
     },
     .hw_version = "0.13",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_0_12 \
@@ -551,6 +571,7 @@ static QEMUMachine pc_machine_v0_12 = {
         { /* end of list */ }
     },
     .hw_version = "0.12",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_0_11 \
@@ -584,6 +605,7 @@ static QEMUMachine pc_machine_v0_11 = {
         { /* end of list */ }
     },
     .hw_version = "0.11",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 static QEMUMachine pc_machine_v0_10 = {
@@ -617,6 +639,7 @@ static QEMUMachine pc_machine_v0_10 = {
         { /* end of list */ }
     },
     .hw_version = "0.10",
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 static QEMUMachine isapc_machine = {
@@ -632,6 +655,7 @@ static QEMUMachine isapc_machine = {
         },
         { /* end of list */ }
     },
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 #ifdef CONFIG_XEN
@@ -641,12 +665,13 @@ static QEMUMachine xenfv_machine = {
     .init = pc_xen_hvm_init,
     .max_cpus = HVM_MAX_VCPUS,
     .default_machine_opts = "accel=xen",
+    DEFAULT_MACHINE_OPTIONS,
 };
 #endif
 
 static void pc_machine_init(void)
 {
-    qemu_register_machine(&pc_machine_v1_4);
+    qemu_register_machine(&pc_i440fx_machine_v1_4);
     qemu_register_machine(&pc_machine_v1_3);
     qemu_register_machine(&pc_machine_v1_2);
     qemu_register_machine(&pc_machine_v1_1);

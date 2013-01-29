@@ -68,6 +68,9 @@
 #if !defined(ECANCELED)
 #define ECANCELED 4097
 #endif
+#if !defined(EMEDIUMTYPE)
+#define EMEDIUMTYPE 4098
+#endif
 #ifndef TIME_MAX
 #define TIME_MAX LONG_MAX
 #endif
@@ -288,7 +291,9 @@ struct qemu_work_item {
 };
 
 #ifdef CONFIG_USER_ONLY
-#define qemu_init_vcpu(env) do { } while (0)
+static inline void qemu_init_vcpu(void *env)
+{
+}
 #else
 void qemu_init_vcpu(void *env);
 #endif

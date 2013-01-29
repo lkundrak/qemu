@@ -35,7 +35,7 @@ static void m68k_cpu_reset(CPUState *s)
     CPUM68KState *env = &cpu->env;
 
     if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
+        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
         log_cpu_state(env, 0);
     }
 
@@ -54,6 +54,22 @@ static void m68k_cpu_reset(CPUState *s)
 }
 
 /* CPU models */
+
+static ObjectClass *m68k_cpu_class_by_name(const char *cpu_model)
+{
+    ObjectClass *oc;
+
+    if (cpu_model == NULL) {
+        return NULL;
+    }
+
+    oc = object_class_by_name(cpu_model);
+    if (oc != NULL && (object_class_dynamic_cast(oc, TYPE_M68K_CPU) == NULL ||
+                       object_class_is_abstract(oc))) {
+        return NULL;
+    }
+    return oc;
+}
 
 static void m5206_cpu_initfn(Object *obj)
 {
@@ -134,6 +150,8 @@ static void m68k_cpu_class_init(ObjectClass *c, void *data)
 
     mcc->parent_reset = cc->reset;
     cc->reset = m68k_cpu_reset;
+
+    cc->class_by_name = m68k_cpu_class_by_name;
 }
 
 static void register_cpu_type(const M68kCPUInfo *info)
@@ -144,7 +162,7 @@ static void register_cpu_type(const M68kCPUInfo *info)
         .instance_init = info->instance_init,
     };
 
-    type_register_static(&type_info);
+    type_register(&type_info);
 }
 
 static const TypeInfo m68k_cpu_type_info = {

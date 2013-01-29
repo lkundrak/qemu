@@ -959,7 +959,7 @@ static void gem_phy_reset(GemState *s)
 
 static void gem_reset(DeviceState *d)
 {
-    GemState *s = FROM_SYSBUS(GemState, sysbus_from_qdev(d));
+    GemState *s = FROM_SYSBUS(GemState, SYS_BUS_DEVICE(d));
 
     DB_PRINT("\n");
 
@@ -1218,7 +1218,7 @@ static void gem_class_init(ObjectClass *klass, void *data)
     dc->reset = gem_reset;
 }
 
-static TypeInfo gem_info = {
+static const TypeInfo gem_info = {
     .class_init = gem_class_init,
     .name  = "cadence_gem",
     .parent = TYPE_SYS_BUS_DEVICE,

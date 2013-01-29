@@ -501,6 +501,11 @@ ObjectClass *object_get_class(Object *obj)
     return obj->class;
 }
 
+bool object_class_is_abstract(ObjectClass *klass)
+{
+    return klass->type->abstract;
+}
+
 const char *object_class_get_name(ObjectClass *klass)
 {
     return klass->type->name;
@@ -1017,7 +1022,7 @@ gchar *object_get_canonical_path(Object *obj)
     return newpath;
 }
 
-Object *object_resolve_path_component(Object *parent, gchar *part)
+Object *object_resolve_path_component(Object *parent, const gchar *part)
 {
     ObjectProperty *prop = object_property_find(parent, part, NULL);
     if (prop == NULL) {

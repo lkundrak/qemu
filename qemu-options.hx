@@ -1096,6 +1096,14 @@ client is specified by the @var{display}. For reverse network
 connections (@var{host}:@var{d},@code{reverse}), the @var{d} argument
 is a TCP port number, not a display number.
 
+@item websocket
+
+Opens an additional TCP listening port dedicated to VNC Websocket connections.
+By defintion the Websocket port is 5700+@var{display}. If @var{host} is
+specified connections will only be allowed from this host.
+As an alternative the Websocket port could be specified by using
+@code{websocket}=@var{port}.
+
 @item password
 
 Require that password based authentication is used for client connections.
@@ -1728,6 +1736,7 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
     "-chardev msmouse,id=id[,mux=on|off]\n"
     "-chardev vc,id=id[[,width=width][,height=height]][[,cols=cols][,rows=rows]]\n"
     "         [,mux=on|off]\n"
+    "-chardev memory,id=id,maxcapacity=maxcapacity\n"
     "-chardev file,id=id,path=path[,mux=on|off]\n"
     "-chardev pipe,id=id,path=path[,mux=on|off]\n"
 #ifdef _WIN32
@@ -1742,9 +1751,11 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
 #endif
 #if defined(__linux__) || defined(__sun__) || defined(__FreeBSD__) \
         || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+    "-chardev serial,id=id,path=path[,mux=on|off]\n"
     "-chardev tty,id=id,path=path[,mux=on|off]\n"
 #endif
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)
+    "-chardev parallel,id=id,path=path[,mux=on|off]\n"
     "-chardev parport,id=id,path=path[,mux=on|off]\n"
 #endif
 #if defined(CONFIG_SPICE)
@@ -1767,6 +1778,7 @@ Backend is one of:
 @option{udp},
 @option{msmouse},
 @option{vc},
+@option{memory},
 @option{file},
 @option{pipe},
 @option{console},
@@ -1775,6 +1787,7 @@ Backend is one of:
 @option{stdio},
 @option{braille},
 @option{tty},
+@option{parallel},
 @option{parport},
 @option{spicevmc}.
 @option{spiceport}.
@@ -1874,6 +1887,14 @@ the console, in pixels.
 @option{cols} and @option{rows} specify that the console be sized to fit a text
 console with the given dimensions.
 
+@item -chardev memory ,id=@var{id} ,maxcapacity=@var{maxcapacity}
+
+Create a circular buffer with fixed size indicated by optionally @option{maxcapacity}
+which will be default 64K if it is not given.
+
+@option{maxcapacity} specifies the max capacity of the size of circular buffer
+to create. Should be power of 2.
+
 @item -chardev file ,id=@var{id} ,path=@var{path}
 
 Log all traffic received from the guest to a file.
@@ -1910,8 +1931,8 @@ take any options.
 
 Send traffic from the guest to a serial device on the host.
 
-@option{serial} is
-only available on Windows hosts.
+On Unix hosts serial will actually accept any tty device,
+not only serial lines.
 
 @option{path} specifies the name of the serial device to open.
 
@@ -1937,16 +1958,15 @@ Connect to a local BrlAPI server. @option{braille} does not take any options.
 
 @item -chardev tty ,id=@var{id} ,path=@var{path}
 
-Connect to a local tty device.
-
 @option{tty} is only available on Linux, Sun, FreeBSD, NetBSD, OpenBSD and
-DragonFlyBSD hosts.
+DragonFlyBSD hosts.  It is an alias for -serial.
 
 @option{path} specifies the path to the tty. @option{path} is required.
 
+@item -chardev parallel ,id=@var{id} ,path=@var{path}
 @item -chardev parport ,id=@var{id} ,path=@var{path}
 
-@option{parport} is only available on Linux, FreeBSD and DragonFlyBSD hosts.
+@option{parallel} is only available on Linux, FreeBSD and DragonFlyBSD hosts.
 
 Connect to a local parallel port.
 

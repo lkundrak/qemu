@@ -7,6 +7,7 @@ trace/generated-tracers.h
 trace/generated-tracers.c
 trace/generated-tracers-dtrace.h
 trace/generated-tracers-dtrace.dtrace
+libcacard/trace/generated-tracers.c
 *-timestamp
 *-softmmu
 *-darwin-user
@@ -70,6 +71,7 @@ fsdev/virtfs-proxy-helper.pod
 *.tp
 *.vr
 *.d
+!scripts/qemu-guest-agent/fsfreeze-hook.d
 *.o
 *.lo
 *.la

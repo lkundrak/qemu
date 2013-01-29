@@ -123,7 +123,7 @@ static void mipsnet_init(int base, qemu_irq irq, NICInfo *nd)
     qdev_set_nic_properties(dev, nd);
     qdev_init_nofail(dev);
 
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     sysbus_connect_irq(s, 0, irq);
     memory_region_add_subregion(get_system_io(),
                                 base,
@@ -229,6 +229,7 @@ static QEMUMachine mips_mipssim_machine = {
     .name = "mipssim",
     .desc = "MIPS MIPSsim platform",
     .init = mips_mipssim_init,
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void mips_mipssim_machine_init(void)

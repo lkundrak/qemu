@@ -34,6 +34,12 @@
 #include "qga/service-win32.h"
 #include <windows.h>
 #endif
+#ifdef __linux__
+#include <linux/fs.h>
+#ifdef FIFREEZE
+#define CONFIG_FSFREEZE
+#endif
+#endif
 
 #ifndef _WIN32
 #define QGA_VIRTIO_PATH_DEFAULT "/dev/virtio-ports/org.qemu.guest_agent.0"
@@ -42,6 +48,9 @@
 #endif
 #define QGA_STATEDIR_DEFAULT CONFIG_QEMU_LOCALSTATEDIR "/run"
 #define QGA_PIDFILE_DEFAULT QGA_STATEDIR_DEFAULT "/qemu-ga.pid"
+#ifdef CONFIG_FSFREEZE
+#define QGA_FSFREEZE_HOOK_DEFAULT CONFIG_QEMU_CONFDIR "/fsfreeze-hook"
+#endif
 #define QGA_SENTINEL_BYTE 0xFF
 
 struct GAState {
@@ -64,6 +73,9 @@ struct GAState {
         const char *log_filepath;
         const char *pid_filepath;
     } deferred_options;
+#ifdef CONFIG_FSFREEZE
+    const char *fsfreeze_hook;
+#endif
 };
 
 struct GAState *ga_state;
@@ -153,6 +165,16 @@ static void usage(const char *cmd)
 "                    %s)\n"
 "  -l, --logfile     set logfile path, logs to stderr by default\n"
 "  -f, --pidfile     specify pidfile (default is %s)\n"
+#ifdef CONFIG_FSFREEZE
+"  -F, --fsfreeze-hook\n"
+"                    enable fsfreeze hook. Accepts an optional argument that\n"
+"                    specifies script to run on freeze/thaw. Script will be\n"
+"                    called with 'freeze'/'thaw' arguments accordingly.\n"
+"                    (default is %s)\n"
+"                    If using -F with an argument, do not follow -F with a\n"
+"                    space.\n"
+"                    (for example: -F/var/run/fsfreezehook.sh)\n"
+#endif
 "  -t, --statedir    specify dir to store state information (absolute paths\n"
 "                    only, default is %s)\n"
 "  -v, --verbose     log extra debugging information\n"
@@ -167,6 +189,9 @@ static void usage(const char *cmd)
 "\n"
 "Report bugs to <mdroth@linux.vnet.ibm.com>\n"
     , cmd, QEMU_VERSION, QGA_VIRTIO_PATH_DEFAULT, QGA_PIDFILE_DEFAULT,
+#ifdef CONFIG_FSFREEZE
+    QGA_FSFREEZE_HOOK_DEFAULT,
+#endif
     QGA_STATEDIR_DEFAULT);
 }
 
@@ -236,13 +261,26 @@ void ga_set_response_delimited(GAState *s)
     s->delimit_response = true;
 }
 
+static FILE *ga_open_logfile(const char *logfile)
+{
+    FILE *f;
+
+    f = fopen(logfile, "a");
+    if (!f) {
+        return NULL;
+    }
+
+    qemu_set_cloexec(fileno(f));
+    return f;
+}
+
 #ifndef _WIN32
 static bool ga_open_pidfile(const char *pidfile)
 {
     int pidfd;
     char pidstr[32];
 
-    pidfd = open(pidfile, O_CREAT|O_WRONLY, S_IRUSR|S_IWUSR);
+    pidfd = qemu_open(pidfile, O_CREAT|O_WRONLY, S_IRUSR|S_IWUSR);
     if (pidfd == -1 || lockf(pidfd, F_TLOCK, 0)) {
         g_critical("Cannot lock pid file, %s", strerror(errno));
         if (pidfd != -1) {
@@ -251,7 +289,7 @@ static bool ga_open_pidfile(const char *pidfile)
         return false;
     }
 
-    if (ftruncate(pidfd, 0) || lseek(pidfd, 0, SEEK_SET)) {
+    if (ftruncate(pidfd, 0)) {
         g_critical("Failed to truncate pid file");
         goto fail;
     }
@@ -261,10 +299,12 @@ static bool ga_open_pidfile(const char *pidfile)
         goto fail;
     }
 
+    /* keep pidfile open & locked forever */
     return true;
 
 fail:
     unlink(pidfile);
+    close(pidfd);
     return false;
 }
 #else /* _WIN32 */
@@ -377,7 +417,7 @@ void ga_unset_frozen(GAState *s)
      * in a frozen state at start up, do it now
      */
     if (s->deferred_options.log_filepath) {
-        s->log_file = fopen(s->deferred_options.log_filepath, "a");
+        s->log_file = ga_open_logfile(s->deferred_options.log_filepath);
         if (!s->log_file) {
             s->log_file = stderr;
         }
@@ -400,6 +440,13 @@ void ga_unset_frozen(GAState *s)
                   s->state_filepath_isfrozen);
     }
 }
+
+#ifdef CONFIG_FSFREEZE
+const char *ga_fsfreeze_hook(GAState *s)
+{
+    return s->fsfreeze_hook;
+}
+#endif
 
 static void become_daemon(const char *pidfile)
 {
@@ -573,6 +620,7 @@ static gboolean channel_event_cb(GIOCondition condition, gpointer data)
         if (!s->virtio) {
             return false;
         }
+        /* fall through */
     case G_IO_STATUS_AGAIN:
         /* virtio causes us to spin here when no process is attached to
          * host-side chardev. sleep a bit to mitigate this
@@ -678,10 +726,13 @@ VOID WINAPI service_main(DWORD argc, TCHAR *argv[])
 
 int main(int argc, char **argv)
 {
-    const char *sopt = "hVvdm:p:l:f:b:s:t:";
+    const char *sopt = "hVvdm:p:l:f:F::b:s:t:";
     const char *method = NULL, *path = NULL;
     const char *log_filepath = NULL;
     const char *pid_filepath = QGA_PIDFILE_DEFAULT;
+#ifdef CONFIG_FSFREEZE
+    const char *fsfreeze_hook = NULL;
+#endif
     const char *state_dir = QGA_STATEDIR_DEFAULT;
 #ifdef _WIN32
     const char *service = NULL;
@@ -691,6 +742,9 @@ int main(int argc, char **argv)
         { "version", 0, NULL, 'V' },
         { "logfile", 1, NULL, 'l' },
         { "pidfile", 1, NULL, 'f' },
+#ifdef CONFIG_FSFREEZE
+        { "fsfreeze-hook", 2, NULL, 'F' },
+#endif
         { "verbose", 0, NULL, 'v' },
         { "method", 1, NULL, 'm' },
         { "path", 1, NULL, 'p' },
@@ -723,6 +777,11 @@ int main(int argc, char **argv)
         case 'f':
             pid_filepath = optarg;
             break;
+#ifdef CONFIG_FSFREEZE
+        case 'F':
+            fsfreeze_hook = optarg ? optarg : QGA_FSFREEZE_HOOK_DEFAULT;
+            break;
+#endif
         case 't':
              state_dir = optarg;
              break;
@@ -786,6 +845,9 @@ int main(int argc, char **argv)
     s = g_malloc0(sizeof(GAState));
     s->log_level = log_level;
     s->log_file = stderr;
+#ifdef CONFIG_FSFREEZE
+    s->fsfreeze_hook = fsfreeze_hook;
+#endif
     g_log_set_default_handler(ga_log, s);
     g_log_set_fatal_mask(NULL, G_LOG_LEVEL_ERROR);
     ga_enable_logging(s);
@@ -838,7 +900,7 @@ int main(int argc, char **argv)
             become_daemon(pid_filepath);
         }
         if (log_filepath) {
-            FILE *log_file = fopen(log_filepath, "a");
+            FILE *log_file = ga_open_logfile(log_filepath);
             if (!log_file) {
                 g_critical("unable to open specified log file: %s",
                            strerror(errno));

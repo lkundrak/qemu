@@ -20,7 +20,7 @@
 #ifndef QEMU_CPU_H
 #define QEMU_CPU_H
 
-#include "qom/object.h"
+#include "hw/qdev-core.h"
 #include "qemu/thread.h"
 
 /**
@@ -40,14 +40,18 @@ typedef struct CPUState CPUState;
 
 /**
  * CPUClass:
+ * @class_by_name: Callback to map -cpu command line model name to an
+ * instantiatable CPU type.
  * @reset: Callback to reset the #CPUState to its initial state.
  *
  * Represents a CPU family or model.
  */
 typedef struct CPUClass {
     /*< private >*/
-    ObjectClass parent_class;
+    DeviceClass parent_class;
     /*< public >*/
+
+    ObjectClass *(*class_by_name)(const char *cpu_model);
 
     void (*reset)(CPUState *cpu);
 } CPUClass;
@@ -57,6 +61,10 @@ struct kvm_run;
 
 /**
  * CPUState:
+ * @cpu_index: CPU index (informative).
+ * @nr_cores: Number of cores within this CPU package.
+ * @nr_threads: Number of threads within this CPU.
+ * @numa_node: NUMA node this CPU is belonging to.
  * @created: Indicates whether the CPU thread has been successfully created.
  * @stop: Indicates a pending stop request.
  * @stopped: Indicates the CPU has been artificially stopped.
@@ -66,8 +74,12 @@ struct kvm_run;
  */
 struct CPUState {
     /*< private >*/
-    Object parent_obj;
+    DeviceState parent_obj;
     /*< public >*/
+
+    int nr_cores;
+    int nr_threads;
+    int numa_node;
 
     struct QemuThread *thread;
 #ifdef _WIN32
@@ -81,14 +93,13 @@ struct CPUState {
     bool stop;
     bool stopped;
 
-#if !defined(CONFIG_USER_ONLY)
     int kvm_fd;
     bool kvm_vcpu_dirty;
-#endif
     struct KVMState *kvm_state;
     struct kvm_run *kvm_run;
 
     /* TODO Move common fields from CPUArchState here. */
+    int cpu_index; /* used by alpha TCG */
 };
 
 
@@ -97,6 +108,17 @@ struct CPUState {
  * @cpu: The CPU whose state is to be reset.
  */
 void cpu_reset(CPUState *cpu);
+
+/**
+ * cpu_class_by_name:
+ * @typename: The CPU base type.
+ * @cpu_model: The model string without any parameters.
+ *
+ * Looks up a CPU #ObjectClass matching name @cpu_model.
+ *
+ * Returns: A #CPUClass or %NULL if not matching class is found.
+ */
+ObjectClass *cpu_class_by_name(const char *typename, const char *cpu_model);
 
 /**
  * qemu_cpu_has_work:
@@ -146,6 +168,16 @@ bool cpu_is_stopped(CPUState *cpu);
  * Schedules the function @func for execution on the vCPU @cpu.
  */
 void run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data);
+
+/**
+ * qemu_get_cpu:
+ * @index: The CPUState@cpu_index value of the CPU to obtain.
+ *
+ * Gets a CPU matching @index.
+ *
+ * Returns: The CPU or %NULL if there is no matching CPU.
+ */
+CPUState *qemu_get_cpu(int index);
 
 
 #endif

@@ -282,7 +282,7 @@ static const struct SCSIReqOps reqops_invalid_opcode = {
 
 static int32_t scsi_unit_attention(SCSIRequest *req, uint8_t *buf)
 {
-    if (req->dev && req->dev->unit_attention.key == UNIT_ATTENTION) {
+    if (req->dev->unit_attention.key == UNIT_ATTENTION) {
         scsi_req_build_sense(req, req->dev->unit_attention);
     } else if (req->bus->unit_attention.key == UNIT_ATTENTION) {
         scsi_req_build_sense(req, req->bus->unit_attention);
@@ -1863,7 +1863,7 @@ static void scsi_device_class_init(ObjectClass *klass, void *data)
     k->props    = scsi_props;
 }
 
-static TypeInfo scsi_device_type_info = {
+static const TypeInfo scsi_device_type_info = {
     .name = TYPE_SCSI_DEVICE,
     .parent = TYPE_DEVICE,
     .instance_size = sizeof(SCSIDevice),

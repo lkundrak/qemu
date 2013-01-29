@@ -98,6 +98,7 @@ S: Maintained
 F: target-ppc/
 
 S390
+M: Richard Henderson <rth@twiddle.net>
 M: Alexander Graf <agraf@suse.de>
 S: Maintained
 F: target-s390x/
@@ -379,7 +380,7 @@ New World
 M: Alexander Graf <agraf@suse.de>
 L: qemu-ppc@nongnu.org
 S: Maintained
-F: hw/ppc_newworld.c
+F: hw/ppc/mac_newworld.c
 F: hw/unin_pci.c
 F: hw/dec_pci.[hc]
 
@@ -387,7 +388,7 @@ Old World
 M: Alexander Graf <agraf@suse.de>
 L: qemu-ppc@nongnu.org
 S: Maintained
-F: hw/ppc_oldworld.c
+F: hw/ppc/mac_oldworld.c
 F: hw/grackle_pci.c
 
 PReP
@@ -396,6 +397,7 @@ L: qemu-ppc@nongnu.org
 S: Odd Fixes
 F: hw/ppc_prep.c
 F: hw/prep_pci.[hc]
+F: hw/pc87312.[hc]
 
 sPAPR
 M: David Gibson <david@gibson.dropbear.id.au>

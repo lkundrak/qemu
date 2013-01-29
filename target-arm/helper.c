@@ -902,7 +902,8 @@ static const ARMCPRegInfo strongarm_cp_reginfo[] = {
 static int mpidr_read(CPUARMState *env, const ARMCPRegInfo *ri,
                       uint64_t *value)
 {
-    uint32_t mpidr = env->cpu_index;
+    CPUState *cs = CPU(arm_env_get_cpu(env));
+    uint32_t mpidr = cs->cpu_index;
     /* We don't support setting cluster ID ([8..11])
      * so these bits always RAZ.
      */
@@ -1270,12 +1271,14 @@ ARMCPU *cpu_arm_init(const char *cpu_model)
 {
     ARMCPU *cpu;
     CPUARMState *env;
+    ObjectClass *oc;
     static int inited = 0;
 
-    if (!object_class_by_name(cpu_model)) {
+    oc = cpu_class_by_name(TYPE_ARM_CPU, cpu_model);
+    if (!oc) {
         return NULL;
     }
-    cpu = ARM_CPU(object_new(cpu_model));
+    cpu = ARM_CPU(object_new(object_class_get_name(oc)));
     env = &cpu->env;
     env->cpu_model_str = cpu_model;
     arm_cpu_realize(cpu);
@@ -1745,7 +1748,7 @@ static void do_interrupt_v7m(CPUARMState *env)
         armv7m_nvic_set_pending(env->nvic, ARMV7M_EXCP_USAGE);
         return;
     case EXCP_SWI:
-        env->regs[15] += 2;
+        /* The PC already points to the next instruction.  */
         armv7m_nvic_set_pending(env->nvic, ARMV7M_EXCP_SVC);
         return;
     case EXCP_PREFETCH_ABORT:

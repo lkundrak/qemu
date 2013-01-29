@@ -1736,6 +1736,7 @@ static void ohci_mem_write(void *opaque,
     /* PXA27x specific registers */
     case 24: /* HcStatus */
         ohci->hstatus &= ~(val & ohci->hmask);
+        break;
 
     case 25: /* HcHReset */
         ohci->hreset = val & ~OHCI_HRESET_FSBIR;
@@ -1909,7 +1910,7 @@ static void ohci_pci_class_init(ObjectClass *klass, void *data)
     dc->props = ohci_pci_properties;
 }
 
-static TypeInfo ohci_pci_info = {
+static const TypeInfo ohci_pci_info = {
     .name          = "pci-ohci",
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(OHCIPCIState),
@@ -1932,7 +1933,7 @@ static void ohci_sysbus_class_init(ObjectClass *klass, void *data)
     dc->props = ohci_sysbus_properties;
 }
 
-static TypeInfo ohci_sysbus_info = {
+static const TypeInfo ohci_sysbus_info = {
     .name          = "sysbus-ohci",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(OHCISysBusState),

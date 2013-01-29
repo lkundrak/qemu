@@ -214,16 +214,15 @@ static void kvm_reset_vcpu(void *opaque)
     kvm_arch_reset_vcpu(cpu);
 }
 
-int kvm_init_vcpu(CPUArchState *env)
+int kvm_init_vcpu(CPUState *cpu)
 {
-    CPUState *cpu = ENV_GET_CPU(env);
     KVMState *s = kvm_state;
     long mmap_size;
     int ret;
 
     DPRINTF("kvm_init_vcpu\n");
 
-    ret = kvm_vm_ioctl(s, KVM_CREATE_VCPU, env->cpu_index);
+    ret = kvm_vm_ioctl(s, KVM_CREATE_VCPU, (void *)kvm_arch_vcpu_id(cpu));
     if (ret < 0) {
         DPRINTF("kvm_create_vcpu failed\n");
         goto err;
@@ -1182,6 +1181,11 @@ static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int virq, bool assign)
 {
     abort();
 }
+
+int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg)
+{
+    return -ENOSYS;
+}
 #endif /* !KVM_CAP_IRQ_ROUTING */
 
 int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n, int virq)
@@ -2022,9 +2026,8 @@ int kvm_set_ioeventfd_pio_word(int fd, uint16_t addr, uint16_t val, bool assign)
     return 0;
 }
 
-int kvm_on_sigbus_vcpu(CPUArchState *env, int code, void *addr)
+int kvm_on_sigbus_vcpu(CPUState *cpu, int code, void *addr)
 {
-    CPUState *cpu = ENV_GET_CPU(env);
     return kvm_arch_on_sigbus_vcpu(cpu, code, addr);
 }
 

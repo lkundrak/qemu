@@ -290,7 +290,7 @@ static int exynos4210_gic_init(SysBusDevice *dev)
     qdev_prop_set_uint32(s->gic, "num-cpu", s->num_cpu);
     qdev_prop_set_uint32(s->gic, "num-irq", EXYNOS4210_GIC_NIRQ);
     qdev_init_nofail(s->gic);
-    busdev = sysbus_from_qdev(s->gic);
+    busdev = SYS_BUS_DEVICE(s->gic);
 
     /* Pass through outbound IRQ lines from the GIC */
     sysbus_pass_irq(dev, busdev);
@@ -346,7 +346,7 @@ static void exynos4210_gic_class_init(ObjectClass *klass, void *data)
     dc->props = exynos4210_gic_properties;
 }
 
-static TypeInfo exynos4210_gic_info = {
+static const TypeInfo exynos4210_gic_info = {
     .name          = "exynos4210.gic",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Exynos4210GicState),
@@ -447,7 +447,7 @@ static void exynos4210_irq_gate_class_init(ObjectClass *klass, void *data)
     dc->props = exynos4210_irq_gate_properties;
 }
 
-static TypeInfo exynos4210_irq_gate_info = {
+static const TypeInfo exynos4210_irq_gate_info = {
     .name          = "exynos4210.irq_gate",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(Exynos4210IRQGateState),

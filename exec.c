@@ -78,7 +78,7 @@ DEFINE_TLS(CPUArchState *,cpu_single_env);
 /* 0 = Do not count executed instructions.
    1 = Precise instruction counting.
    2 = Adaptive rate instruction counting.  */
-int use_icount = 0;
+int use_icount;
 
 #if !defined(CONFIG_USER_ONLY)
 
@@ -247,24 +247,25 @@ static const VMStateDescription vmstate_cpu_common = {
 };
 #endif
 
-CPUArchState *qemu_get_cpu(int cpu)
+CPUState *qemu_get_cpu(int index)
 {
     CPUArchState *env = first_cpu;
+    CPUState *cpu = NULL;
 
     while (env) {
-        if (env->cpu_index == cpu)
+        cpu = ENV_GET_CPU(env);
+        if (cpu->cpu_index == index) {
             break;
+        }
         env = env->next_cpu;
     }
 
-    return env;
+    return cpu;
 }
 
 void cpu_exec_init(CPUArchState *env)
 {
-#ifndef CONFIG_USER_ONLY
     CPUState *cpu = ENV_GET_CPU(env);
-#endif
     CPUArchState **penv;
     int cpu_index;
 
@@ -278,8 +279,8 @@ void cpu_exec_init(CPUArchState *env)
         penv = &(*penv)->next_cpu;
         cpu_index++;
     }
-    env->cpu_index = cpu_index;
-    env->numa_node = 0;
+    cpu->cpu_index = cpu_index;
+    cpu->numa_node = 0;
     QTAILQ_INIT(&env->breakpoints);
     QTAILQ_INIT(&env->watchpoints);
 #ifndef CONFIG_USER_ONLY
@@ -531,7 +532,6 @@ CPUArchState *cpu_copy(CPUArchState *env)
 {
     CPUArchState *new_env = cpu_init(env->cpu_model_str);
     CPUArchState *next_cpu = new_env->next_cpu;
-    int cpu_index = new_env->cpu_index;
 #if defined(TARGET_HAS_ICE)
     CPUBreakpoint *bp;
     CPUWatchpoint *wp;
@@ -539,9 +539,8 @@ CPUArchState *cpu_copy(CPUArchState *env)
 
     memcpy(new_env, env, sizeof(CPUArchState));
 
-    /* Preserve chaining and index. */
+    /* Preserve chaining. */
     new_env->next_cpu = next_cpu;
-    new_env->cpu_index = cpu_index;
 
     /* Clone all break/watchpoints.
        Note: Once we support ptrace with hw-debug register access, make sure
@@ -864,18 +863,16 @@ static void *file_ram_alloc(RAMBlock *block,
         return NULL;
     }
 
-    if (asprintf(&filename, "%s/qemu_back_mem.XXXXXX", path) == -1) {
-        return NULL;
-    }
+    filename = g_strdup_printf("%s/qemu_back_mem.XXXXXX", path);
 
     fd = mkstemp(filename);
     if (fd < 0) {
         perror("unable to create backing store for hugepages");
-        free(filename);
+        g_free(filename);
         return NULL;
     }
     unlink(filename);
-    free(filename);
+    g_free(filename);
 
     memory = (memory+hpagesize-1) & ~(hpagesize-1);
 

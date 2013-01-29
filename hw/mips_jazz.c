@@ -209,7 +209,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
     case JAZZ_MAGNUM:
         dev = qdev_create(NULL, "sysbus-g364");
         qdev_init_nofail(dev);
-        sysbus = sysbus_from_qdev(dev);
+        sysbus = SYS_BUS_DEVICE(dev);
         sysbus_mmio_map(sysbus, 0, 0x60080000);
         sysbus_mmio_map(sysbus, 1, 0x40000000);
         sysbus_connect_irq(sysbus, 0, rc4030[3]);
@@ -295,7 +295,7 @@ static void mips_jazz_init(MemoryRegion *address_space,
     /* NVRAM */
     dev = qdev_create(NULL, "ds1225y");
     qdev_init_nofail(dev);
-    sysbus = sysbus_from_qdev(dev);
+    sysbus = SYS_BUS_DEVICE(dev);
     sysbus_mmio_map(sysbus, 0, 0x80009000);
 
     /* LED indicator */
@@ -325,6 +325,7 @@ static QEMUMachine mips_magnum_machine = {
     .desc = "MIPS Magnum",
     .init = mips_magnum_init,
     .block_default_type = IF_SCSI,
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 static QEMUMachine mips_pica61_machine = {
@@ -332,6 +333,7 @@ static QEMUMachine mips_pica61_machine = {
     .desc = "Acer Pica 61",
     .init = mips_pica61_init,
     .block_default_type = IF_SCSI,
+    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void mips_jazz_machine_init(void)

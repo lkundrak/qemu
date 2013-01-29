@@ -740,7 +740,7 @@ static void tusb6010_irq(void *opaque, int source, int level)
 
 static void tusb6010_reset(DeviceState *dev)
 {
-    TUSBState *s = FROM_SYSBUS(TUSBState, sysbus_from_qdev(dev));
+    TUSBState *s = FROM_SYSBUS(TUSBState, SYS_BUS_DEVICE(dev));
     int i;
 
     s->test_reset = TUSB_PROD_TEST_RESET_VAL;
@@ -798,7 +798,7 @@ static void tusb6010_class_init(ObjectClass *klass, void *data)
     dc->reset = tusb6010_reset;
 }
 
-static TypeInfo tusb6010_info = {
+static const TypeInfo tusb6010_info = {
     .name          = "tusb6010",
     .parent        = TYPE_SYS_BUS_DEVICE,
     .instance_size = sizeof(TUSBState),

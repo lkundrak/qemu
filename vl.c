@@ -231,7 +231,7 @@ unsigned int nb_prom_envs = 0;
 const char *prom_envs[MAX_PROM_ENVS];
 int boot_menu;
 uint8_t *boot_splash_filedata;
-int boot_splash_filedata_size;
+size_t boot_splash_filedata_size;
 uint8_t qemu_extra_params_fw[2];
 
 typedef struct FWBootEntry FWBootEntry;
@@ -297,6 +297,195 @@ static struct {
     { .driver = "isa-cirrus-vga",       .flag = &default_vga       },
     { .driver = "vmware-svga",          .flag = &default_vga       },
     { .driver = "qxl-vga",              .flag = &default_vga       },
+};
+
+static QemuOptsList qemu_rtc_opts = {
+    .name = "rtc",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_rtc_opts.head),
+    .desc = {
+        {
+            .name = "base",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "clock",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "driftfix",
+            .type = QEMU_OPT_STRING,
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_sandbox_opts = {
+    .name = "sandbox",
+    .implied_opt_name = "enable",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_sandbox_opts.head),
+    .desc = {
+        {
+            .name = "enable",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_trace_opts = {
+    .name = "trace",
+    .implied_opt_name = "trace",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_trace_opts.head),
+    .desc = {
+        {
+            .name = "events",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "file",
+            .type = QEMU_OPT_STRING,
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_option_rom_opts = {
+    .name = "option-rom",
+    .implied_opt_name = "romfile",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_option_rom_opts.head),
+    .desc = {
+        {
+            .name = "bootindex",
+            .type = QEMU_OPT_NUMBER,
+        }, {
+            .name = "romfile",
+            .type = QEMU_OPT_STRING,
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_machine_opts = {
+    .name = "machine",
+    .implied_opt_name = "type",
+    .merge_lists = true,
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_machine_opts.head),
+    .desc = {
+        {
+            .name = "type",
+            .type = QEMU_OPT_STRING,
+            .help = "emulated machine"
+        }, {
+            .name = "accel",
+            .type = QEMU_OPT_STRING,
+            .help = "accelerator list",
+        }, {
+            .name = "kernel_irqchip",
+            .type = QEMU_OPT_BOOL,
+            .help = "use KVM in-kernel irqchip",
+        }, {
+            .name = "kvm_shadow_mem",
+            .type = QEMU_OPT_SIZE,
+            .help = "KVM shadow MMU size",
+        }, {
+            .name = "kernel",
+            .type = QEMU_OPT_STRING,
+            .help = "Linux kernel image file",
+        }, {
+            .name = "initrd",
+            .type = QEMU_OPT_STRING,
+            .help = "Linux initial ramdisk file",
+        }, {
+            .name = "append",
+            .type = QEMU_OPT_STRING,
+            .help = "Linux kernel command line",
+        }, {
+            .name = "dtb",
+            .type = QEMU_OPT_STRING,
+            .help = "Linux kernel device tree file",
+        }, {
+            .name = "dumpdtb",
+            .type = QEMU_OPT_STRING,
+            .help = "Dump current dtb to a file and quit",
+        }, {
+            .name = "phandle_start",
+            .type = QEMU_OPT_STRING,
+            .help = "The first phandle ID we may generate dynamically",
+        }, {
+            .name = "dt_compatible",
+            .type = QEMU_OPT_STRING,
+            .help = "Overrides the \"compatible\" property of the dt root node",
+        }, {
+            .name = "dump-guest-core",
+            .type = QEMU_OPT_BOOL,
+            .help = "Include guest memory in  a core dump",
+        }, {
+            .name = "mem-merge",
+            .type = QEMU_OPT_BOOL,
+            .help = "enable/disable memory merge support",
+        },{
+            .name = "usb",
+            .type = QEMU_OPT_BOOL,
+            .help = "Set on/off to enable/disable usb",
+        },
+        { /* End of list */ }
+    },
+};
+
+static QemuOptsList qemu_boot_opts = {
+    .name = "boot-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_boot_opts.head),
+    .desc = {
+        /* the three names below are not used now */
+        {
+            .name = "order",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "once",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "menu",
+            .type = QEMU_OPT_STRING,
+        /* following are really used */
+        }, {
+            .name = "splash",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "splash-time",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "reboot-timeout",
+            .type = QEMU_OPT_STRING,
+        },
+        { /*End of list */ }
+    },
+};
+
+static QemuOptsList qemu_add_fd_opts = {
+    .name = "add-fd",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_add_fd_opts.head),
+    .desc = {
+        {
+            .name = "fd",
+            .type = QEMU_OPT_NUMBER,
+            .help = "file descriptor of which a duplicate is added to fd set",
+        },{
+            .name = "set",
+            .type = QEMU_OPT_NUMBER,
+            .help = "ID of the fd set to add fd to",
+        },{
+            .name = "opaque",
+            .type = QEMU_OPT_STRING,
+            .help = "free-form string used to describe fd",
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_object_opts = {
+    .name = "object",
+    .implied_opt_name = "qom-type",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_object_opts.head),
+    .desc = {
+        { }
+    },
 };
 
 const char *qemu_get_vm_name(void)
@@ -448,21 +637,18 @@ StatusInfo *qmp_query_status(Error **errp)
 void qemu_get_timedate(struct tm *tm, int offset)
 {
     time_t ti;
-    struct tm *ret;
 
     time(&ti);
     ti += offset;
     if (rtc_date_offset == -1) {
         if (rtc_utc)
-            ret = gmtime(&ti);
+            gmtime_r(&ti, tm);
         else
-            ret = localtime(&ti);
+            localtime_r(&ti, tm);
     } else {
         ti -= rtc_date_offset;
-        ret = gmtime(&ti);
+        gmtime_r(&ti, tm);
     }
-
-    memcpy(tm, ret, sizeof(struct tm));
 }
 
 int qemu_timedate_diff(struct tm *tm)
@@ -1012,15 +1198,15 @@ void add_boot_device_path(int32_t bootindex, DeviceState *dev,
  * memory pointed by "size" is assigned total length of the array in bytes
  *
  */
-char *get_boot_devices_list(uint32_t *size)
+char *get_boot_devices_list(size_t *size)
 {
     FWBootEntry *i;
-    uint32_t total = 0;
+    size_t total = 0;
     char *list = NULL;
 
     QTAILQ_FOREACH(i, &fw_boot_order, link) {
         char *devpath = NULL, *bootpath;
-        int len;
+        size_t len;
 
         if (i->dev) {
             devpath = qdev_get_fw_dev_path(i->dev);
@@ -1263,7 +1449,7 @@ void pcmcia_socket_unregister(PCMCIASocket *socket)
         }
 }
 
-void pcmcia_info(Monitor *mon)
+void pcmcia_info(Monitor *mon, const QDict *qdict)
 {
     struct pcmcia_socket_entry_s *iter;
 
@@ -2052,11 +2238,14 @@ static int device_init_func(QemuOpts *opts, void *opaque)
 
 static int chardev_init_func(QemuOpts *opts, void *opaque)
 {
-    CharDriverState *chr;
+    Error *local_err = NULL;
 
-    chr = qemu_chr_new_from_opts(opts, NULL);
-    if (!chr)
+    qemu_chr_new_from_opts(opts, NULL, &local_err);
+    if (error_is_set(&local_err)) {
+        fprintf(stderr, "%s\n", error_get_pretty(local_err));
+        error_free(local_err);
         return -1;
+    }
     return 0;
 }
 
@@ -2526,7 +2715,7 @@ int main(int argc, char **argv, char **envp)
     const char *icount_option = NULL;
     const char *initrd_filename;
     const char *kernel_filename, *kernel_cmdline;
-    char boot_devices[33] = "cad"; /* default to HD->floppy->CD-ROM */
+    char boot_devices[33] = "";
     DisplayState *ds;
     int cyls, heads, secs, translation;
     QemuOpts *hda_opts = NULL, *opts, *machine_opts;
@@ -2568,6 +2757,22 @@ int main(int argc, char **argv, char **envp)
     }
 
     module_call_init(MODULE_INIT_QOM);
+
+    qemu_add_opts(&qemu_drive_opts);
+    qemu_add_opts(&qemu_chardev_opts);
+    qemu_add_opts(&qemu_device_opts);
+    qemu_add_opts(&qemu_netdev_opts);
+    qemu_add_opts(&qemu_net_opts);
+    qemu_add_opts(&qemu_rtc_opts);
+    qemu_add_opts(&qemu_global_opts);
+    qemu_add_opts(&qemu_mon_opts);
+    qemu_add_opts(&qemu_trace_opts);
+    qemu_add_opts(&qemu_option_rom_opts);
+    qemu_add_opts(&qemu_machine_opts);
+    qemu_add_opts(&qemu_boot_opts);
+    qemu_add_opts(&qemu_sandbox_opts);
+    qemu_add_opts(&qemu_add_fd_opts);
+    qemu_add_opts(&qemu_object_opts);
 
     runstate_init();
 
@@ -3882,7 +4087,9 @@ int main(int argc, char **argv, char **envp)
     qdev_machine_init();
 
     QEMUMachineInitArgs args = { .ram_size = ram_size,
-                                 .boot_device = boot_devices,
+                                 .boot_device = (boot_devices[0] == '\0') ?
+                                                machine->boot_order :
+                                                boot_devices,
                                  .kernel_filename = kernel_filename,
                                  .kernel_cmdline = kernel_cmdline,
                                  .initrd_filename = initrd_filename,

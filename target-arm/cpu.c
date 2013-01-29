@@ -64,7 +64,7 @@ static void arm_cpu_reset(CPUState *s)
     CPUARMState *env = &cpu->env;
 
     if (qemu_loglevel_mask(CPU_LOG_RESET)) {
-        qemu_log("CPU Reset (CPU %d)\n", env->cpu_index);
+        qemu_log("CPU Reset (CPU %d)\n", s->cpu_index);
         log_cpu_state(env, 0);
     }
 
@@ -200,6 +200,22 @@ void arm_cpu_realize(ARMCPU *cpu)
 }
 
 /* CPU models */
+
+static ObjectClass *arm_cpu_class_by_name(const char *cpu_model)
+{
+    ObjectClass *oc;
+
+    if (!cpu_model) {
+        return NULL;
+    }
+
+    oc = object_class_by_name(cpu_model);
+    if (!oc || !object_class_dynamic_cast(oc, TYPE_ARM_CPU) ||
+        object_class_is_abstract(oc)) {
+        return NULL;
+    }
+    return oc;
+}
 
 static void arm926_initfn(Object *obj)
 {
@@ -767,6 +783,8 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
 
     acc->parent_reset = cc->reset;
     cc->reset = arm_cpu_reset;
+
+    cc->class_by_name = arm_cpu_class_by_name;
 }
 
 static void cpu_register(const ARMCPUInfo *info)
@@ -779,7 +797,7 @@ static void cpu_register(const ARMCPUInfo *info)
         .class_size = sizeof(ARMCPUClass),
     };
 
-    type_register_static(&type_info);
+    type_register(&type_info);
 }
 
 static const TypeInfo arm_cpu_type_info = {
