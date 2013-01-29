@@ -131,7 +131,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
 
     // (Yet) unmapped I/O registers
     dev = sysbus_create_simple("bcm2835_todo", BCM2708_PERI_BASE, NULL);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_todo_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -143,7 +143,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_varargs("bcm2835_ic", ARMCTRL_IC_BASE,
         cpu_pic[ARM_PIC_CPU_IRQ],
         cpu_pic[ARM_PIC_CPU_FIQ], NULL);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_ic_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -155,7 +155,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
 
     // UART
     dev = sysbus_create_simple("pl011", UART0_BASE, pic[INTERRUPT_VC_UART]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_uart_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -168,7 +168,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
             pic[INTERRUPT_TIMER0], pic[INTERRUPT_TIMER1], 
             pic[INTERRUPT_TIMER2], pic[INTERRUPT_TIMER3], 
             NULL);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_st_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -178,7 +178,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     // ARM timer
     dev = sysbus_create_simple("bcm2835_timer", ARMCTRL_TIMER0_1_BASE, 
         pic[INTERRUPT_ARM_TIMER]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_timer_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -188,7 +188,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     // USB controller
     dev = sysbus_create_simple("bcm2835_usb", USB_BASE, 
         pic[INTERRUPT_VC_USB]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_usb_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -198,7 +198,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     // MPHI - Message-based Parallel Host Interface
     dev = sysbus_create_simple("bcm2835_mphi", MPHI_BASE, 
         pic[INTERRUPT_HOSTPORT]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_mphi_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -209,7 +209,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     // Semaphores / Doorbells / Mailboxes
     dev = sysbus_create_simple("bcm2835_sbm", ARMCTRL_0_SBM_BASE, 
         pic[INTERRUPT_ARM_MAILBOX]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_sbm_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -227,7 +227,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("bcm2835_power", 
         ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_POWER<<4), 
         mbox_irq[MBOX_CHAN_POWER]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_power_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -239,7 +239,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("bcm2835_fb", 
         ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_FB<<4), 
         mbox_irq[MBOX_CHAN_FB]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_fb_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -251,7 +251,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("bcm2835_property", 
         ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_PROPERTY<<4), 
         mbox_irq[MBOX_CHAN_PROPERTY]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_prop_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -263,7 +263,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     dev = sysbus_create_simple("bcm2835_vchiq", 
         ARMCTRL_0_SBM_BASE + 0x400 + (MBOX_CHAN_VCHIQ<<4), 
         mbox_irq[MBOX_CHAN_VCHIQ]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_vchiq_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -274,7 +274,7 @@ static void raspi_init(QEMUMachineInitArgs *args)
     // Extended Mass Media Controller
     dev = sysbus_create_simple("bcm2835_emmc", EMMC_BASE, 
         pic[INTERRUPT_VC_ARASANSDIO]);
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_emmc_bus, NULL, mr, 
         0, memory_region_size(mr));
@@ -283,11 +283,11 @@ static void raspi_init(QEMUMachineInitArgs *args)
 
     // DMA Channels
     dev = qdev_create(NULL, "bcm2835_dma");
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     qdev_init_nofail(dev);
     sysbus_mmio_map(s, 0, DMA_BASE);
     sysbus_mmio_map(s, 1, (BCM2708_PERI_BASE + 0xe05000));
-    s = sysbus_from_qdev(dev);
+    s = SYS_BUS_DEVICE(dev);
     mr = sysbus_mmio_get_region(s, 0);
     memory_region_init_alias(per_dma1_bus, NULL, mr, 
         0, memory_region_size(mr));
