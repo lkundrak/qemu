@@ -39,16 +39,17 @@ static void bcm2835_ic_update(bcm2835_ic_state *s)
     int i;
 
     set = 0;
+    if (s->fiq_enable) {
+        set = s->level[s->fiq_select >> 5] & (1u << (s->fiq_select & 0x1f));
+    }
+    qemu_set_irq(s->fiq, set);    
+
+    set = 0;
     for(i = 0; i < 3; i++) {
         set |= (s->level[i] & s->irq_enable[i]);
     }
     qemu_set_irq(s->irq, set);
 
-    set = 0;
-    if (s->fiq_enable) {
-        set = s->level[s->fiq_select >> 5] & (1u << (s->fiq_select & 0x1f));
-    }
-    qemu_set_irq(s->fiq, set);    
 }
 
 static void bcm2835_ic_set_irq(void *opaque, int irq, int level)

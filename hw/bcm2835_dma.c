@@ -49,7 +49,7 @@
 #define BCM2708_DMA_TDMODE_LEN(w, h) ((h) << 16 | (w))
 
 
-//#define LOG_REG_ACCESS
+// #define LOG_REG_ACCESS
 
 typedef struct {
     uint32_t cs;
@@ -95,7 +95,12 @@ static void bcm2835_dma_update(bcm2835_dma_state *s, int c)
         ch->nextconbk = ldl_phys(ch->conblk_ad + 20);
 
         assert(!(ch->ti & BCM2708_DMA_TDMODE));
-        
+
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_dma[%d]: BEGIN src=%08x dst=%08x len=%08x\n", c, 
+        ch->source_ad, ch->dest_ad, ch->txfr_len);
+#endif
+
         while(ch->txfr_len != 0) {
             data = 0;
             if (ch->ti & (1 << 11)) {
@@ -117,11 +122,18 @@ static void bcm2835_dma_update(bcm2835_dma_state *s, int c)
             }
             ch->txfr_len -= 4;
         }
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_dma[%d]: END src=%08x dst=%08x len=%08x\n", c, 
+        ch->source_ad, ch->dest_ad, ch->txfr_len);
+#endif
                 
         ch->cs |= BCM2708_DMA_END;
         if (ch->ti & BCM2708_DMA_INT_EN) {
             ch->cs |= BCM2708_DMA_INT;
             s->int_status |= (1 << c);
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_dma[%d]: IRQ\n", c);
+#endif            
             qemu_set_irq(ch->irq, 1);
         }
         

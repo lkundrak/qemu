@@ -8,7 +8,7 @@
 #include "qdev.h"
 #include "ptimer.h"
 
-#define LOG_REG_ACCESS
+// #define LOG_REG_ACCESS
 
 #define SYSCLOCK_FREQ (252000000)
 #define APBCLOCK_FREQ (126000000)

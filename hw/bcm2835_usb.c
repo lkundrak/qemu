@@ -1,20 +1,35 @@
 /*
- * Raspberry Pi emulation (c) 2012 Gregory Estrade
+ * Raspberry Pi emulation (c) 2012-2013 Gregory Estrade
  * This code is licensed under the GNU GPLv2 and later.
  */
 
+// This is wrong at so many levels, but well, I'm releasing it anyway
+
 #include "sysbus.h"
 #include "qemu-common.h"
+#include "qemu/timer.h"
 #include "qdev.h"
+#include "sysemu/dma.h"
 #include "hw/usb.h"
 
 #include "bcm2835_usb_regs.h"
 
-#define LOG_REG_ACCESS
+#define LOG_REG_LEVEL 2
+
+// You may have to change these parameters to get an almost-usable mouse support
+// The problem is that frame scheduling is all done by software, so a LOT of
+// interrupts are generated, which doesn't help...
+#define SOF_INCR 1
+#define SOF_DELAY 5000
 
 #define NB_HCHANS 8
 
+typedef struct bcm2835_usb_state_struct bcm2835_usb_state;
+
 typedef struct {
+    bcm2835_usb_state *parent;
+    int index;
+    
 	uint32_t hcchar;
 	uint32_t hcsplt;
 	uint32_t hcint;
@@ -23,15 +38,22 @@ typedef struct {
 	uint32_t hcdma;
 	uint32_t reserved;
 	uint32_t hcdmab;
+    
+    USBPacket packet;
+    uint8_t buffer[8192];
 } bcm2835_usb_hc_state;
 
-typedef struct {
+struct bcm2835_usb_state_struct {
     SysBusDevice busdev;
     MemoryRegion iomem;
+    DMAContext *dma;
     
     USBBus bus;
     USBPort port;
     int attached;
+    int reset_done;
+    QEMUTimer *sof_timer;
+
     
     uint32_t gusbcfg;
     uint32_t hptxfsiz;
@@ -48,20 +70,57 @@ typedef struct {
     uint32_t gintmsk;
     uint32_t gdfifocfg;
     uint32_t hprt0;
+    uint32_t haint;
+    uint32_t haintmsk;
+    uint32_t gnptxsts;
+    uint32_t hfnum;
+    uint32_t hptxsts;
 
     bcm2835_usb_hc_state hchan[NB_HCHANS];
 
     qemu_irq irq;
     
-} bcm2835_usb_state;
+};
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
 static void bcm2835_usb_update_irq(bcm2835_usb_state *s) {
+    int n;
+    
+    s->haint = 0;
+    for(n = 0; n < NB_HCHANS; n++) {
+        if (s->hchan[n].hcint & s->hchan[n].hcintmsk) {
+            s->haint |= (1 << n);
+        }
+    }
+    s->gintsts &= ~gintsts_hcintr;
+    if (s->haint & s->haintmsk) {
+        s->gintsts |= gintsts_hcintr;
+    }
+
+    if ( (s->hprt0 & hprt0_prtconndet)
+        || (s->hprt0 & hprt0_prtenchng)
+        ) {
+        s->gintsts |= gintsts_portintr;
+    } else {
+        s->gintsts &= ~gintsts_portintr;
+    }
+
+    s->gintsts |= gintsts_nptxfempty | gintsts_ptxfempty;
+    
     if (!(s->gahbcfg & gahbcfg_glblintrmsk)) {
         qemu_set_irq(s->irq, 0);
     } else {
-        printf("[QEMU] bcm2835_usb_update_irq gintsts=%08x gintmsk=%08x\n",
-            s->gintsts, s->gintmsk);
+        /*printf("[QEMU] bcm2835_usb_update_irq gintsts=%08x gintmsk=%08x\n",
+            s->gintsts, s->gintmsk);*/
         if (s->gintsts & s->gintmsk) {
             qemu_set_irq(s->irq, 1);
         } else {
@@ -70,90 +129,189 @@ static void bcm2835_usb_update_irq(bcm2835_usb_state *s) {
     }
 }
 
+
+static void bcm2835_usb_sof_tick(void *opaque) {
+    bcm2835_usb_state *s = (bcm2835_usb_state *)opaque;
+    int64_t now;
+
+    uint32_t num = (s->hfnum & 0x3fff) + SOF_INCR;
+    s->hfnum = (num & 0x3fff) | (0x3210 << 16);
+    s->gintsts |= gintsts_sofintr;
+    
+    bcm2835_usb_update_irq(s);
+    
+    now = qemu_get_clock_ns(vm_clock) / SCALE_US;
+    qemu_mod_timer(s->sof_timer, now + SOF_DELAY);
+}
+
+static void channel_enable(bcm2835_usb_hc_state *c) {
+    // int n;
+    USBEndpoint *ep;
+    USBDevice *dev;
+
+    uint32_t epnum = (c->hcchar >> hcchar_epnum_shift) & hcchar_epnum_mask;
+    uint32_t devaddr = (c->hcchar >> hcchar_devaddr_shift) & hcchar_devaddr_mask;
+    uint32_t xfersize = (c->hctsiz >> hctsiz_xfersize_shift) & hctsiz_xfersize_mask;
+    // uint32_t pktcnt = (c->hctsiz >> hctsiz_pktcnt_shift) & hctsiz_pktcnt_mask;
+    uint32_t pid = (c->hctsiz >> hctsiz_pid_shift) & hctsiz_pid_mask;
+    uint32_t dma_addr = c->hcdma; // ???
+    // uint32_t dma_addr_b = c->hcdmab; // ???
+    int actual_length;
+    int qpid;
+
+    if (!c->parent->reset_done)
+        return;
+
+    /*printf("DEV = %d EPNUM = %d EPDIR = %s PKTCNT = %d XFERSIZE = %d\n", devaddr, 
+        epnum, (c->hcchar & hcchar_epdir ? "IN" : "OUT"), 
+        pktcnt, xfersize);*/
+    
+    if (c->hcchar & hcchar_epdir) {
+        // IN
+        qpid = USB_TOKEN_IN;
+    } else {
+        // OUT/SETUP
+        if (pid == DWC_HCTSIZ_SETUP) {
+            qpid = USB_TOKEN_SETUP;
+        } else {
+            qpid = USB_TOKEN_OUT;
+        }
+    }
+    // printf("QPID = %02x\n", qpid);
+    dev = usb_find_device(&c->parent->port, devaddr);
+    
+    assert( dev != NULL );
+    
+    ep = usb_ep_get(dev, qpid, epnum);
+    usb_packet_setup(&c->packet, qpid, ep, devaddr, 0, 0); 
+
+    if (xfersize > 0) {
+        dma_memory_read(c->parent->dma, dma_addr, c->buffer, xfersize);
+        
+        /*for(n = 0; n < xfersize; n++) {
+            printf("%02x", c->buffer[n]);
+        }
+        printf("\n\n");*/
+        
+        usb_packet_addbuf(&c->packet, c->buffer, xfersize);
+    }
+    usb_handle_packet(dev, &c->packet);
+    /*printf("PACKET STATUS = %d actual_length=%d\n", 
+        c->packet.status, c->packet.actual_length);*/
+    
+    if (c->packet.status == USB_RET_SUCCESS) {
+        if (qpid == USB_TOKEN_IN) {
+            actual_length = c->packet.actual_length;
+            
+            xfersize -= actual_length;
+            c->hctsiz &= ~(hctsiz_xfersize_mask << hctsiz_xfersize_shift);
+            c->hctsiz |= xfersize << hctsiz_xfersize_shift;
+            
+            dma_memory_write(c->parent->dma, dma_addr, c->buffer, 
+                actual_length);
+            
+            /*for(n = 0; n < actual_length; n++) {
+                printf("%02x", c->buffer[n]);
+            }
+            printf("\n\n");*/
+        }
+        
+        c->hcint |= hcint_xfercomp | hcint_chhltd;
+        bcm2835_usb_update_irq(c->parent);
+    } else if (c->packet.status == USB_RET_NAK) {
+        c->hcint |= hcint_chhltd | hcint_nak;
+        bcm2835_usb_update_irq(c->parent);
+    } else {
+        assert(0);
+    }
+    
+}
+
 static uint32_t bcm2835_usb_hchan_read(bcm2835_usb_state *s, int ch,
     int offset) {
     
     bcm2835_usb_hc_state *c = &s->hchan[ch];
     uint32_t res;
-    int unmapped = 0;
+    int log = 0;
+    const char *reg = "(unmapped)";
     
     switch(offset) {
-    case 0x0:
+    case 0x0:   reg = "hcchar";
         res = c->hcchar;
         break;
-    case 0x4:
+    case 0x4:   reg = "hcsplt";
         res = c->hcsplt;
         break;
-    case 0x8:
+    case 0x8:   reg = "hcint";
         res = c->hcint;
         break;
-    case 0xc:
+    case 0xc:   reg = "hcintmsk";
         res = c->hcintmsk;
         break;
-    case 0x10:
+    case 0x10:  reg = "hctsiz";
         res = c->hctsiz;
         break;
-    case 0x14:
+    case 0x14:  reg = "hcdma";
         res = c->hcdma;
         break;
-    case 0x1c:
+    case 0x1c:  reg = "hcdmab";
         res = c->hcdmab;
         break;
     default:
-        unmapped = 1;
         res = 0;
         break;
     }
 
-#ifdef LOG_REG_ACCESS
-    printf("[QEMU] bcm2835_usb: read_hc[%d](%x) %08x %s\n", ch,
-        (int)offset, res, (unmapped ? "(unmapped)" : "") );
-#endif
+    if (log > LOG_REG_LEVEL) 
+        printf("[QEMU] bcm2835_usb: read_hc[%d](%x) %08x <%s>\n", ch,
+            (int)offset, res, reg );
     
     return res;
 } 
 static void bcm2835_usb_hchan_write(bcm2835_usb_state *s, int ch,
-    int offset, uint32_t value) {
-    
+    int offset, uint32_t value, int *pset_irq) {
+    int log = 0;
     bcm2835_usb_hc_state *c = &s->hchan[ch];
-    int unmapped = 0;
+    
+    const char *reg = "(unmapped)";
     
     switch(offset) {
-    case 0x0:
+    case 0x0:   reg = "hcchar";
         c->hcchar = value;
         if (value & hcchar_chdis) {
             c->hcchar &= ~(hcchar_chdis | hcchar_chen);
             // TODO irq
         }
+        if (value & hcchar_chen)
+            channel_enable(c);
         break;
-    case 0x4:
+    case 0x4:   reg = "hcsplt";
         c->hcsplt = value;
         break;
-    case 0x8:
+    case 0x8:   reg = "hcint";
         // Looks like a standard interrupt register
         c->hcint &= ~value;
+        *pset_irq = 1;
         break;
-    case 0xc:
+    case 0xc:   reg = "hcintmsk";
         c->hcintmsk = value;
         break;
-    case 0x10:
+    case 0x10:  reg = "hctsiz";
         c->hctsiz = value;
         break;
-    case 0x14:
+    case 0x14:  reg = "hcdma";
         c->hcdma = value;
         break;
-    case 0x1c:
+    case 0x1c:  reg = "hcdmab";
         c->hcdmab = value;
         break;
     default:
-        unmapped = 1;
         break;
     }
 
-#ifdef LOG_REG_ACCESS
-    printf("[QEMU] bcm2835_usb: write_hc[%d](%x) %08x %s\n", ch,
-        (int)offset, value, (unmapped ? "(unmapped)" : "") );
-#endif
+    if (log > LOG_REG_LEVEL) 
+        printf("[QEMU] bcm2835_usb: write_hc[%d](%x) %08x >%s<\n", ch,
+            (int)offset, value, reg );
     
 } 
 
@@ -162,79 +320,103 @@ static uint64_t bcm2835_usb_read(void *opaque, hwaddr offset,
 {
     bcm2835_usb_state *s = (bcm2835_usb_state *)opaque;
     uint32_t res = 0;
-    int unmapped = 0;
+    
+    const char *reg = "(unmapped)";
     int log = 1;
+    
     int i;
 
     assert(size == 4);
-    
+        
     switch(offset) {
-    case 0x0:   // gotgctl
+    case 0x0:   reg = "gotgctl";
         res = s->gotgctl;
         break;
-    case 0x4:   // gotgint
+    case 0x4:   reg = "gotgint";
         res = s->gotgint;
         break;
-    case 0x8:   // gahbcfg
+    case 0x8:   reg = "gahbcfg";
         res = s->gahbcfg;
         break;
-    case 0xc:   // gusbcfg
+    case 0xc:   reg = "gusbcfg";
         res = s->gusbcfg;
         break;
-    case 0x10:  // grstctl
+    case 0x10:  reg = "grstctl";
         res = s->grstctl;
         break;
-    case 0x14:  // gintsts
+    case 0x14:  reg = "gintsts";
         res = s->gintsts;
         // Enforce Host mode
         res |= gintsts_curmode;
         break;
-    case 0x18:  // gintmsk
+    case 0x18:  reg = "gintmsk";
         res = s->gintmsk;
         break;
-    case 0x24:  // grxfsiz
+    case 0x24:  reg = "grxfsiz";
         res = s->grxfsiz;
         break;
-    case 0x28:  // gnptxfsiz
+    case 0x28:  reg = "gnptxfsiz";
         res = s->gnptxfsiz;
         break;
-    case 0x40:  // gsnpsid
+    case 0x2c:  reg = "gnptxsts";
+        res = s->gnptxsts;
+        break;
+    case 0x40:  reg = "gsnpsid";
         res = 0x4f54280a;
         break;
-    case 0x44:  // ghwcfg1
+    case 0x44:  reg = "ghwcfg1";
         res = 0;
         break;
-    case 0x48:  // ghwcfg2
+    case 0x48:  reg = "ghwcfg2";
         res = 0x228ddd50;
         break;
-    case 0x4c:  // ghwcfg3
+    case 0x4c:  reg = "ghwcfg3";
         res = 0x0ff000e8;
         break;
-    case 0x50:  // ghwcfg4
+    case 0x50:  reg = "ghwcfg4";
         res = 0x1ff00020;
         break;
-    case 0x5c:  // gdfifocfg
+    case 0x5c:  reg = "gdfifocfg";
         res = s->gdfifocfg;
         break;
-    case 0x100: // hptxfsiz
+    case 0x100: reg = "hptxfsiz";
         res = s->hptxfsiz;
         break;    
-    case 0x400: // hcfg
+    case 0x400: reg = "hcfg";
         res = s->hcfg;
         break;
-    case 0x440: // hprt0
+    case 0x408: reg = "hfnum";
+        res = s->hfnum;
+        break;
+    case 0x410: reg = "hptxsts";
+        res = s->hptxsts;
+        break;
+    case 0x414: reg = "haint";
+        res = s->haint;
+        break;
+    case 0x418: reg = "haintmsk";
+        res = s->haintmsk;
+        break;
+    case 0x440: reg = "hprt0";
         res = s->hprt0;
         res &= ~hprt0_prtconnsts;
         if (s->attached)
             res |= hprt0_prtconnsts;        
         break;
-    case 0x800: // dcfg
+    case 0x800: reg = "dcfg";
         res = s->dcfg;
+        break;
+
+    case 0xe00:
+    case 0x54:
+    case 0x58:
+        reg = "(power-related)";
+        res = 0;
         break;
 
     default:
         if ((offset >= 0x104) && (offset < 0x104 + (15 << 2))) {
-            // dtxfsiz[0..14]
+            reg = "dtxfsiz[0..14]";
             res = s->dtxfsiz[(offset - 0x104) >> 2];
         } else if ((offset >= 0x500) && (offset < 0x500 + 0x20*NB_HCHANS)) {
             i = (offset - 0x500) >> 5;
@@ -243,16 +425,14 @@ static uint64_t bcm2835_usb_read(void *opaque, hwaddr offset,
         } else {
             qemu_log_mask(LOG_GUEST_ERROR,
                 "bcm2835_usb_read: Bad offset %x\n", (int)offset);
-            unmapped = 1;
             res = 0;
         }
         break;
     }
 
-#ifdef LOG_REG_ACCESS
-    if (log) printf("[QEMU] bcm2835_usb: read(%x) %08x %s\n", (int)offset, res,
-        (unmapped ? "(unmapped)" : "") );
-#endif
+    if (log > LOG_REG_LEVEL) 
+        printf("[QEMU] bcm2835_usb: read(%x) %08x <%s>\n", (int)offset, 
+            res, reg );
 
     return res;
 }
@@ -261,61 +441,83 @@ static void bcm2835_usb_write(void *opaque, hwaddr offset,
     uint64_t value, unsigned size)
 {
     bcm2835_usb_state *s = (bcm2835_usb_state *)opaque;
-    int unmapped = 0;
+    
+    const char *reg = "(unmapped)";
     int log = 1;
+    
     int i;
     int set_irq = 0;
     
     assert(size == 4);
     
     switch(offset) {
-    case 0x0:
+    case 0x0:   reg = "gotgctl";
         s->gotgctl = value;
         break;
-    case 0x4:   // gotgint
+    case 0x4:   reg = "gotgint";
         // Looks like a standard interrupt register
         s->gotgint &= ~value;
         break;
-    case 0x8:   // gahbcfg
+    case 0x8:   reg = "gahbcfg";
         s->gahbcfg = value;
         set_irq = 1;
         break;
-    case 0xc:   // gusbcfg
+    case 0xc:   reg = "gusbcfg";
         s->gusbcfg = value;
         break;
-    case 0x10:  // grstctl
+    case 0x10:  reg = "grstctl";
         s->grstctl &= ~0x7c0;
         s->grstctl |= value & 0x7c0;
         break;
-    case 0x14:  // gintsts
-        if (value & gintsts_sofintr)
-            s->gintsts &= ~gintsts_sofintr;
+    case 0x14:  reg = "gintsts";
+        /*if (value & gintsts_sofintr)
+            s->gintsts &= ~gintsts_sofintr;*/
+        s->gintsts &= ~value;
+        // Enforce Host mode
+        s->gintsts |= gintsts_curmode;
         set_irq = 1;
         break;
-    case 0x18:  // gintmsk
+    case 0x18:  reg = "gintmsk";
         s->gintmsk = value;
         break;
-    case 0x24:  // grxfsiz
+    case 0x24:  reg = "grxfsiz";
         s->grxfsiz = value;
         break;
-    case 0x28:  // gnptxfsiz
+    case 0x28:  reg = "gnptxfsiz";
         s->gnptxfsiz = value;
         break;
-    case 0x5c:  // gdfifocfg
+    case 0x5c:  reg = "gdfifocfg";
         s->gdfifocfg = value;
         break;
-    case 0x100: // hptxfsiz
+    case 0x100: reg = "hptxfsiz";
         s->hptxfsiz = value;
         break;
-    case 0x400: // hcfg
+    case 0x400: reg = "hcfg";
         s->hcfg = value;
         break;
-    case 0x440: // hprt0
+    case 0x408: reg = "hfnum";
+        // Probably RO
+        break;
+    case 0x410: reg = "hptxsts";
+        // Probably RO
+        break;
+    case 0x414: reg = "haint";
+        // Probably RO
+        break;
+    case 0x418: reg = "haintmsk";
+        s->haintmsk = value & ((1 << NB_HCHANS) - 1);
+        set_irq = 1;
+        break;
+    case 0x440: reg = "hprt0";
         if (!(s->hprt0 & hprt0_prtpwr) && (value & hprt0_prtpwr)) {
             // Trigger the port status change interrupt on power on
             if (s->attached) {
                 s->hprt0 |= hprt0_prtconndet;
                 set_irq = 1;
+                // Reset the device (that's probably not the right place)
+                usb_device_reset(s->port.dev);
+                s->reset_done = 1;
+                qemu_mod_timer(s->sof_timer, 0);
             }
         }
         s->hprt0 &= ~hprt0_prtpwr;
@@ -332,14 +534,6 @@ static void bcm2835_usb_write(void *opaque, hwaddr offset,
             s->hprt0 |= hprt0_prtena;
         }
         
-        /*s->hprt0 &= ~hprt0_prtenchng;
-        if ( (s->hprt0 & hprt0_prtena) ^ (value & hprt0_prtena) ) {
-            s->hprt0 |= hprt0_prtenchng;
-            set_irq = 1;
-        }
-        s->hprt0 &= ~hprt0_prtena;
-        s->hprt0 |= value & hprt0_prtena;*/
-
         // Interrupt clears
         if (value & hprt0_prtconndet) {
             s->hprt0 &= ~hprt0_prtconndet;
@@ -350,39 +544,32 @@ static void bcm2835_usb_write(void *opaque, hwaddr offset,
             set_irq = 1;
         }
 
-        // Set portintr according to hprt0's irq sources values
-        if (set_irq) {
-            if ( (s->hprt0 & hprt0_prtconndet)
-                || (s->hprt0 & hprt0_prtenchng)
-                ) {
-                s->gintsts |= gintsts_portintr;
-            } else {
-                s->gintsts &= ~gintsts_portintr;
-            }
-        }
+        break;
 
+    case 0xe00:
+    case 0x54:
+    case 0x58:
+        reg = "(power-related)";
         break;
             
     default:
         if ((offset >= 0x104) && (offset < 0x104 + (15 << 2))) {
-            // dtxfsiz[0..14]
+            reg = "dtxfsiz[0..14]";
             s->dtxfsiz[(offset - 0x104) >> 2] = value;
         } else if ((offset >= 0x500) && (offset < 0x500 + 0x20*NB_HCHANS)) {
             i = (offset - 0x500) >> 5;
-            bcm2835_usb_hchan_write(s, i, offset & 0x1f, value);
+            bcm2835_usb_hchan_write(s, i, offset & 0x1f, value, &set_irq);
             log = 0;
         } else {
             qemu_log_mask(LOG_GUEST_ERROR,
                 "bcm2835_usb_write: Bad offset %x\n", (int)offset);
-            unmapped = 1;
         }
         break;        
     }
     
-#ifdef LOG_REG_ACCESS
-    if (log) printf("[QEMU] bcm2835_usb: write(%x) %08x %s\n", (int)offset, 
-        (uint32_t)value, (unmapped ? "(unmapped)" : ""));
-#endif
+    if (log > LOG_REG_LEVEL) 
+        printf("[QEMU] bcm2835_usb: write(%x) %08x >%s<\n", (int)offset, 
+            (uint32_t)value, reg);
 
     if (set_irq)
         bcm2835_usb_update_irq(s);
@@ -390,21 +577,17 @@ static void bcm2835_usb_write(void *opaque, hwaddr offset,
 
 static void bcm2835_usb_attach(USBPort *port1) 
 {
-    printf("[QEMU] port_attach\n");
     bcm2835_usb_state *s = port1->opaque;
     s->attached = 1;
 }
 static void bcm2835_usb_detach(USBPort *port1) 
 {
-    printf("******************* DETACH\n");
 }
 static void bcm2835_usb_child_detach(USBPort *port1, USBDevice *child) 
 {
-    printf("******************* CHILD DETACH\n");    
 }
 static void bcm2835_usb_wakeup(USBPort *port1)
 {
-    printf("******************* WAKEUP\n");
 }
 static void bcm2835_usb_async_complete(USBPort *port, USBPacket *packet)
 {
@@ -444,6 +627,8 @@ static int bcm2835_usb_init(SysBusDevice *dev)
     bcm2835_usb_state *s = FROM_SYSBUS(bcm2835_usb_state, dev);
     int n;
     
+    s->dma = &dma_context_memory;
+    
     s->gusbcfg = 0x20402700;
     s->hptxfsiz = 0x02002000;
     s->hcfg = 0x00000001;
@@ -462,8 +647,14 @@ static int bcm2835_usb_init(SysBusDevice *dev)
     s->gdfifocfg = 0x00000000;
     // s->hprt0 = 0x00000400;
     s->hprt0 = DWC_HPRT0_PRTSPD_FULL_SPEED << hprt0_prtspd_shift;
+    s->gnptxsts = 0x080100;
+    s->hfnum = 0;
+    s->hptxsts = 0x080200;
     
     for(n = 0; n < NB_HCHANS; n++) {
+        s->hchan[n].parent = s;
+        s->hchan[n].index = n;
+        
         s->hchan[n].hcchar = 0;
         s->hchan[n].hcsplt = 0;
         s->hchan[n].hcint = 0;
@@ -471,6 +662,8 @@ static int bcm2835_usb_init(SysBusDevice *dev)
         s->hchan[n].hctsiz = 0;
         s->hchan[n].hcdma = 0;
         s->hchan[n].hcdmab = 0;
+        
+        usb_packet_init(&s->hchan[n].packet);
     }
     
     memory_region_init_io(&s->iomem, &bcm2835_usb_ops, s, 
@@ -481,6 +674,10 @@ static int bcm2835_usb_init(SysBusDevice *dev)
     sysbus_init_irq(dev, &s->irq);
 
     s->attached = 0;
+    s->reset_done = 0;
+    
+    s->sof_timer = qemu_new_timer(vm_clock, SCALE_US, bcm2835_usb_sof_tick, s);
+    
     usb_bus_new(&s->bus, &bcm2835_usb_bus_ops, &dev->qdev);
     usb_register_port(&s->bus, &s->port, s, 0, &bcm2835_usb_port_ops, 
         USB_SPEED_MASK_LOW | USB_SPEED_MASK_FULL );

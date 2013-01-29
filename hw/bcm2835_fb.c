@@ -39,6 +39,8 @@
 
 #include "bcm2835_common.h"
 
+#define FRAMESKIP 1
+
 //#define BITS 8
 //#include "milkymist-vgafb_template.h"
 //#define BITS 15
@@ -142,6 +144,14 @@ static void fb_update_display(void *opaque)
 
     int src_width = 0;
     int dest_width = 0;
+    
+    static uint32_t frame = 0;
+    
+    if (++frame < FRAMESKIP) {
+        return;
+    } else {
+        frame = 0;
+    }
     
     if (!bcm2835_fb.xres)
         return;
