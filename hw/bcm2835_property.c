@@ -12,7 +12,7 @@
 
 #include "bcm2835_common.h"
 
-#define LOG_REG_ACCESS
+// #define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;
@@ -112,6 +112,53 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
             stl_phys(value + 16, VCRAM_SIZE); // size
             resplen = 8;
             break;
+
+        // Clocks
+
+        case 0x00030001: // Get clock state
+            stl_phys(value + 16, 0x1);
+            resplen = 8;
+            break;
+        
+        case 0x00038001: // Set clock state
+            resplen = 8;
+            break;
+
+        case 0x00030002: // Get clock rate
+        case 0x00030004: // Get max clock rate
+        case 0x00030007: // Get min clock rate
+            switch(ldl_phys(value + 12)) {
+            case 1: // EMMC
+                stl_phys(value + 16, 50000000);
+                break;
+            case 2: // UART
+                stl_phys(value + 16, 3000000);
+                break;
+            default:
+                stl_phys(value + 16, 700000000);
+                break;
+            }
+            resplen = 8;
+            break;
+            
+        case 0x00038002: // Set clock rate
+        case 0x00038004: // Set max clock rate
+        case 0x00038007: // Set min clock rate
+            resplen = 8;
+            break;
+
+        // Temperature
+        
+        case 0x00030006: // Get temperature
+            stl_phys(value + 16, 25000);
+            resplen = 8;
+            break;
+            
+        case 0x0003000A: // Get max temperature
+            stl_phys(value + 16, 99000);
+            resplen = 8;
+            break;
+        
 
         // Frame buffer
 

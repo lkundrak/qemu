@@ -7,7 +7,7 @@
 #include "qemu-common.h"
 #include "qdev.h"
 
-#define LOG_REG_ACCESS
+// #define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;
@@ -37,7 +37,6 @@ static uint64_t bcm2835_mphi_read(void *opaque, hwaddr offset,
 {
     bcm2835_mphi_state *s = (bcm2835_mphi_state *)opaque;
     uint32_t res = 0;
-    int unmapped = 0;
 
     assert(size == 4);
     
@@ -61,14 +60,12 @@ static uint64_t bcm2835_mphi_read(void *opaque, hwaddr offset,
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
             "bcm2835_mphi_read: Bad offset %x\n", (int)offset);
-        unmapped = 1;
         res = 0;
         break;
     }
 
 #ifdef LOG_REG_ACCESS
-    printf("[QEMU] bcm2835_mphi: read(%x) %08x %s\n", (int)offset, res,
-        (unmapped ? "(unmapped)" : "") );
+    printf("[QEMU] bcm2835_mphi: read(%x) %08x\n", (int)offset, res);
 #endif
 
     return res;
@@ -78,7 +75,6 @@ static void bcm2835_mphi_write(void *opaque, hwaddr offset,
     uint64_t value, unsigned size)
 {
     bcm2835_mphi_state *s = (bcm2835_mphi_state *)opaque;
-    int unmapped = 0;
     int set_irq = 0;
     
     assert(size == 4);
@@ -116,13 +112,12 @@ static void bcm2835_mphi_write(void *opaque, hwaddr offset,
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
             "bcm2835_mphi_write: Bad offset %x\n", (int)offset);
-        unmapped = 1;
         break;        
     }
     
 #ifdef LOG_REG_ACCESS
-    printf("[QEMU] bcm2835_mphi: write(%x) %08x %s\n", (int)offset, 
-        (uint32_t)value, (unmapped ? "(unmapped)" : ""));
+    printf("[QEMU] bcm2835_mphi: write(%x) %08x\n", (int)offset, 
+        (uint32_t)value);
 #endif
 
     if (set_irq)
