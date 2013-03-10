@@ -39,6 +39,8 @@
 
 #include "bcm2835_common.h"
 
+// #define LOG_REG_ACCESS
+
 #define FRAMESKIP 1
 
 //#define BITS 8
@@ -153,6 +155,9 @@ static void fb_update_display(void *opaque)
         frame = 0;
     }
     
+    if (bcm2835_fb.lock)
+        return;
+    
     if (!bcm2835_fb.xres)
         return;
     
@@ -210,6 +215,7 @@ static void fb_update_display(void *opaque)
 static void bcm2835_fb_mbox_push(bcm2835_fb_state *s, uint32_t value) 
 {
     value &= ~0xf;
+    bcm2835_fb.lock = 1;
     
     bcm2835_fb.xres = ldl_phys(value);
     bcm2835_fb.yres = ldl_phys(value + 4);
@@ -231,9 +237,15 @@ static void bcm2835_fb_mbox_push(bcm2835_fb_state *s, uint32_t value)
     stl_phys(value + 16, bcm2835_fb.pitch);
     stl_phys(value + 32, bcm2835_fb.base);
     stl_phys(value + 36, bcm2835_fb.size);
-    
+
+#ifdef LOG_REG_ACCESS
+    printf("[QEMU] bcm2835_fb: mbox_push res=(%d %d)\n", 
+        bcm2835_fb.xres, bcm2835_fb.yres);
+#endif
+
+    bcm2835_fb.invalidate = 1;        
     qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
-    bcm2835_fb.invalidate = 1;    
+    bcm2835_fb.lock = 0;
 }
 
 static uint64_t bcm2835_fb_read(void *opaque, hwaddr offset,
@@ -300,12 +312,15 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     
     s->pending = 0;
     
-    //bcm2835_fb.invalidate = 0;
-    //bcm2835_fb.xres = 0;
-    bcm2835_fb.xres = 1024;
-    bcm2835_fb.yres = 768;
-    bcm2835_fb.xres_virtual = 1024;
-    bcm2835_fb.yres_virtual = 768;
+    // bcm2835_fb.invalidate = 0;
+    bcm2835_fb.xres = 0;
+    bcm2835_fb.yres = 0;
+    bcm2835_fb.xres_virtual = 0;
+    bcm2835_fb.yres_virtual = 0;
+    // bcm2835_fb.xres = 1024;
+    // bcm2835_fb.yres = 768;
+    // bcm2835_fb.xres_virtual = 1024;
+    // bcm2835_fb.yres_virtual = 768;
     
     bcm2835_fb.bpp = 16;
     bcm2835_fb.xoffset = 0;
@@ -318,12 +333,14 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     bcm2835_fb.size = bcm2835_fb.yres * bcm2835_fb.pitch;
 
     bcm2835_fb.invalidate = 1;
-        
+    bcm2835_fb.lock = 1;
+    
     sysbus_init_irq(dev, &s->mbox_irq);
     
     bcm2835_fb.ds = graphic_console_init(fb_update_display,
         fb_invalidate_display,
         NULL, NULL, s);
+    bcm2835_fb.lock = 0;
 
     memory_region_init_io(&s->iomem, &bcm2835_fb_ops, s, "bcm2835_fb", 0x10);
     sysbus_init_mmio(dev, &s->iomem);
