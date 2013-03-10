@@ -71,7 +71,7 @@ static uint32_t gen_opc_hflags[OPC_BUF_SIZE];
 
 #include "exec/gen-icount.h"
 
-static void sh4_translate_init(void)
+void sh4_translate_init(void)
 {
     int i;
     static int done_init = 0;
@@ -251,11 +251,11 @@ SuperHCPU *cpu_sh4_init(const char *cpu_model)
     cpu = SUPERH_CPU(object_new(TYPE_SUPERH_CPU));
     env = &cpu->env;
     env->features = def->features;
-    sh4_translate_init();
     env->cpu_model_str = cpu_model;
-    cpu_reset(CPU(cpu));
     cpu_register(env, def);
-    qemu_init_vcpu(env);
+
+    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
+
     return cpu;
 }
 
@@ -833,36 +833,10 @@ static void _decode_opc(DisasContext * ctx)
         gen_helper_div1(REG(B11_8), cpu_env, REG(B7_4), REG(B11_8));
 	return;
     case 0x300d:		/* dmuls.l Rm,Rn */
-	{
-	    TCGv_i64 tmp1 = tcg_temp_new_i64();
-	    TCGv_i64 tmp2 = tcg_temp_new_i64();
-
-	    tcg_gen_ext_i32_i64(tmp1, REG(B7_4));
-	    tcg_gen_ext_i32_i64(tmp2, REG(B11_8));
-	    tcg_gen_mul_i64(tmp1, tmp1, tmp2);
-	    tcg_gen_trunc_i64_i32(cpu_macl, tmp1);
-	    tcg_gen_shri_i64(tmp1, tmp1, 32);
-	    tcg_gen_trunc_i64_i32(cpu_mach, tmp1);
-
-	    tcg_temp_free_i64(tmp2);
-	    tcg_temp_free_i64(tmp1);
-	}
+        tcg_gen_muls2_i32(cpu_macl, cpu_mach, REG(B7_4), REG(B11_8));
 	return;
     case 0x3005:		/* dmulu.l Rm,Rn */
-	{
-	    TCGv_i64 tmp1 = tcg_temp_new_i64();
-	    TCGv_i64 tmp2 = tcg_temp_new_i64();
-
-	    tcg_gen_extu_i32_i64(tmp1, REG(B7_4));
-	    tcg_gen_extu_i32_i64(tmp2, REG(B11_8));
-	    tcg_gen_mul_i64(tmp1, tmp1, tmp2);
-	    tcg_gen_trunc_i64_i32(cpu_macl, tmp1);
-	    tcg_gen_shri_i64(tmp1, tmp1, 32);
-	    tcg_gen_trunc_i64_i32(cpu_mach, tmp1);
-
-	    tcg_temp_free_i64(tmp2);
-	    tcg_temp_free_i64(tmp1);
-	}
+        tcg_gen_mulu2_i32(cpu_macl, cpu_mach, REG(B7_4), REG(B11_8));
 	return;
     case 0x600e:		/* exts.b Rm,Rn */
 	tcg_gen_ext8s_i32(REG(B11_8), REG(B7_4));
@@ -1985,7 +1959,7 @@ gen_intermediate_code_internal(CPUSH4State * env, TranslationBlock * tb,
     max_insns = tb->cflags & CF_COUNT_MASK;
     if (max_insns == 0)
         max_insns = CF_COUNT_MASK;
-    gen_icount_start();
+    gen_tb_start();
     while (ctx.bstate == BS_NONE && tcg_ctx.gen_opc_ptr < gen_opc_end) {
         if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
             QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
@@ -2055,7 +2029,7 @@ gen_intermediate_code_internal(CPUSH4State * env, TranslationBlock * tb,
 	}
     }
 
-    gen_icount_end(tb, num_insns);
+    gen_tb_end(tb, num_insns);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
     if (search_pc) {
         i = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;

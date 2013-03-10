@@ -1390,7 +1390,6 @@ static inline void glue(gen_, name)(int ra, int rb, int rc, int islit,\
         tcg_temp_free(tmp1);                                          \
     }                                                                 \
 }
-ARITH3(umulh)
 ARITH3(cmpbge)
 ARITH3(minub8)
 ARITH3(minsb8)
@@ -2426,7 +2425,24 @@ static ExitStatus translate_one(DisasContext *ctx, uint32_t insn)
             break;
         case 0x30:
             /* UMULH */
-            gen_umulh(ra, rb, rc, islit, lit);
+            {
+                TCGv low;
+                if (unlikely(rc == 31)){
+                    break;
+                }
+                if (ra == 31) {
+                    tcg_gen_movi_i64(cpu_ir[rc], 0);
+                    break;
+                }
+                low = tcg_temp_new();
+                if (islit) {
+                    tcg_gen_movi_tl(low, lit);
+                    tcg_gen_mulu2_i64(low, cpu_ir[rc], cpu_ir[ra], low);
+                } else {
+                    tcg_gen_mulu2_i64(low, cpu_ir[rc], cpu_ir[ra], cpu_ir[rb]);
+                }
+                tcg_temp_free(low);
+            }
             break;
         case 0x40:
             /* MULL/V */
@@ -3395,7 +3411,7 @@ static inline void gen_intermediate_code_internal(CPUAlphaState *env,
     if (max_insns == 0)
         max_insns = CF_COUNT_MASK;
 
-    gen_icount_start();
+    gen_tb_start();
     do {
         if (unlikely(!QTAILQ_EMPTY(&env->breakpoints))) {
             QTAILQ_FOREACH(bp, &env->breakpoints, entry) {
@@ -3462,7 +3478,7 @@ static inline void gen_intermediate_code_internal(CPUAlphaState *env,
         abort();
     }
 
-    gen_icount_end(tb, num_insns);
+    gen_tb_end(tb, num_insns);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
     if (search_pc) {
         j = tcg_ctx.gen_opc_ptr - tcg_ctx.gen_opc_buf;

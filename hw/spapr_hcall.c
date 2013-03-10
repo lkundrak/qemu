@@ -323,6 +323,36 @@ static target_ulong h_protect(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     return H_SUCCESS;
 }
 
+static target_ulong h_read(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                           target_ulong opcode, target_ulong *args)
+{
+    CPUPPCState *env = &cpu->env;
+    target_ulong flags = args[0];
+    target_ulong pte_index = args[1];
+    uint8_t *hpte;
+    int i, ridx, n_entries = 1;
+
+    if ((pte_index * HASH_PTE_SIZE_64) & ~env->htab_mask) {
+        return H_PARAMETER;
+    }
+
+    if (flags & H_READ_4) {
+        /* Clear the two low order bits */
+        pte_index &= ~(3ULL);
+        n_entries = 4;
+    }
+
+    hpte = env->external_htab + (pte_index * HASH_PTE_SIZE_64);
+
+    for (i = 0, ridx = 0; i < n_entries; i++) {
+        args[ridx++] = ldq_p(hpte);
+        args[ridx++] = ldq_p(hpte + (HASH_PTE_SIZE_64/2));
+        hpte += HASH_PTE_SIZE_64;
+    }
+
+    return H_SUCCESS;
+}
+
 static target_ulong h_set_dabr(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                                target_ulong opcode, target_ulong *args)
 {
@@ -469,16 +499,11 @@ static target_ulong h_register_vpa(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     CPUPPCState *tenv;
     CPUState *tcpu;
 
-    for (tenv = first_cpu; tenv; tenv = tenv->next_cpu) {
-        tcpu = CPU(ppc_env_get_cpu(tenv));
-        if (tcpu->cpu_index == procno) {
-            break;
-        }
-    }
-
-    if (!tenv) {
+    tcpu = qemu_get_cpu(procno);
+    if (!tcpu) {
         return H_PARAMETER;
     }
+    tenv = tcpu->env_ptr;
 
     switch (flags) {
     case FLAGS_REGISTER_VPA:
@@ -513,13 +538,14 @@ static target_ulong h_cede(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                            target_ulong opcode, target_ulong *args)
 {
     CPUPPCState *env = &cpu->env;
+    CPUState *cs = CPU(cpu);
 
     env->msr |= (1ULL << MSR_EE);
     hreg_compute_hflags(env);
-    if (!cpu_has_work(CPU(cpu))) {
+    if (!cpu_has_work(cs)) {
         env->halted = 1;
         env->exception_index = EXCP_HLT;
-        env->exit_request = 1;
+        cs->exit_request = 1;
     }
     return H_SUCCESS;
 }
@@ -714,6 +740,7 @@ static void hypercall_register_types(void)
     spapr_register_hypercall(H_ENTER, h_enter);
     spapr_register_hypercall(H_REMOVE, h_remove);
     spapr_register_hypercall(H_PROTECT, h_protect);
+    spapr_register_hypercall(H_READ, h_read);
 
     /* hcall-bulk */
     spapr_register_hypercall(H_BULK_REMOVE, h_bulk_remove);

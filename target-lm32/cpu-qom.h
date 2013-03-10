@@ -34,6 +34,7 @@
 
 /**
  * LM32CPUClass:
+ * @parent_realize: The parent class' realize handler.
  * @parent_reset: The parent class' reset handler.
  *
  * A LatticeMico32 CPU model.
@@ -43,6 +44,7 @@ typedef struct LM32CPUClass {
     CPUClass parent_class;
     /*< public >*/
 
+    DeviceRealize parent_realize;
     void (*parent_reset)(CPUState *cpu);
 } LM32CPUClass;
 
@@ -67,5 +69,6 @@ static inline LM32CPU *lm32_env_get_cpu(CPULM32State *env)
 
 #define ENV_GET_CPU(e) CPU(lm32_env_get_cpu(e))
 
+#define ENV_OFFSET offsetof(LM32CPU, env)
 
 #endif

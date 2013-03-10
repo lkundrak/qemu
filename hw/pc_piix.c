@@ -294,8 +294,8 @@ static void pc_xen_hvm_init(QEMUMachineInitArgs *args)
 }
 #endif
 
-static QEMUMachine pc_i440fx_machine_v1_4 = {
-    .name = "pc-i440fx-1.4",
+static QEMUMachine pc_i440fx_machine_v1_5 = {
+    .name = "pc-i440fx-1.5",
     .alias = "pc",
     .desc = "Standard PC (i440FX + PIIX, 1996)",
     .init = pc_init_pci,
@@ -304,11 +304,36 @@ static QEMUMachine pc_i440fx_machine_v1_4 = {
     DEFAULT_MACHINE_OPTIONS,
 };
 
+static QEMUMachine pc_i440fx_machine_v1_4 = {
+    .name = "pc-i440fx-1.4",
+    .desc = "Standard PC (i440FX + PIIX, 1996)",
+    .init = pc_init_pci,
+    .max_cpus = 255,
+    .compat_props = (GlobalProperty[]) {
+        PC_COMPAT_1_4,
+        { /* end of list */ }
+    },
+    DEFAULT_MACHINE_OPTIONS,
+};
+
 #define PC_COMPAT_1_3 \
+	PC_COMPAT_1_4, \
         {\
             .driver   = "usb-tablet",\
             .property = "usb_version",\
             .value    = stringify(1),\
+        },{\
+            .driver   = "virtio-net-pci",\
+            .property = "ctrl_mac_addr",\
+            .value    = "off",      \
+        },{ \
+            .driver   = "virtio-net-pci", \
+            .property = "mq", \
+            .value    = "off", \
+        }, {\
+            .driver   = "e1000",\
+            .property = "autonegotiation",\
+            .value    = "off",\
         }
 
 static QEMUMachine pc_machine_v1_3 = {
@@ -671,6 +696,7 @@ static QEMUMachine xenfv_machine = {
 
 static void pc_machine_init(void)
 {
+    qemu_register_machine(&pc_i440fx_machine_v1_5);
     qemu_register_machine(&pc_i440fx_machine_v1_4);
     qemu_register_machine(&pc_machine_v1_3);
     qemu_register_machine(&pc_machine_v1_2);

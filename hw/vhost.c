@@ -53,10 +53,14 @@ static void vhost_dev_sync_region(struct vhost_dev *dev,
         log = __sync_fetch_and_and(from, 0);
         while ((bit = sizeof(log) > sizeof(int) ?
                 ffsll(log) : ffs(log))) {
-            ram_addr_t ram_addr;
+            hwaddr page_addr;
+            hwaddr section_offset;
+            hwaddr mr_offset;
             bit -= 1;
-            ram_addr = section->offset_within_region + bit * VHOST_LOG_PAGE;
-            memory_region_set_dirty(section->mr, ram_addr, VHOST_LOG_PAGE);
+            page_addr = addr + bit * VHOST_LOG_PAGE;
+            section_offset = page_addr - section->offset_within_address_space;
+            mr_offset = section_offset + section->offset_within_region;
+            memory_region_set_dirty(section->mr, mr_offset, VHOST_LOG_PAGE);
             log &= ~(0x1ull << bit);
         }
         addr += VHOST_LOG_CHUNK;
@@ -65,14 +69,21 @@ static void vhost_dev_sync_region(struct vhost_dev *dev,
 
 static int vhost_sync_dirty_bitmap(struct vhost_dev *dev,
                                    MemoryRegionSection *section,
-                                   hwaddr start_addr,
-                                   hwaddr end_addr)
+                                   hwaddr first,
+                                   hwaddr last)
 {
     int i;
+    hwaddr start_addr;
+    hwaddr end_addr;
 
     if (!dev->log_enabled || !dev->started) {
         return 0;
     }
+    start_addr = section->offset_within_address_space;
+    end_addr = range_get_last(start_addr, section->size);
+    start_addr = MAX(first, start_addr);
+    end_addr = MIN(last, end_addr);
+
     for (i = 0; i < dev->mem->nregions; ++i) {
         struct vhost_memory_region *reg = dev->mem->regions + i;
         vhost_dev_sync_region(dev, section, start_addr, end_addr,
@@ -93,10 +104,18 @@ static void vhost_log_sync(MemoryListener *listener,
 {
     struct vhost_dev *dev = container_of(listener, struct vhost_dev,
                                          memory_listener);
-    hwaddr start_addr = section->offset_within_address_space;
-    hwaddr end_addr = start_addr + section->size;
+    vhost_sync_dirty_bitmap(dev, section, 0x0, ~0x0ULL);
+}
 
-    vhost_sync_dirty_bitmap(dev, section, start_addr, end_addr);
+static void vhost_log_sync_range(struct vhost_dev *dev,
+                                 hwaddr first, hwaddr last)
+{
+    int i;
+    /* FIXME: this is N^2 in number of sections */
+    for (i = 0; i < dev->n_mem_sections; ++i) {
+        MemoryRegionSection *section = &dev->mem_sections[i];
+        vhost_sync_dirty_bitmap(dev, section, first, last);
+    }
 }
 
 /* Assign/unassign. Keep an unsorted array of non-overlapping
@@ -268,19 +287,15 @@ static inline void vhost_dev_log_resize(struct vhost_dev* dev, uint64_t size)
 {
     vhost_log_chunk_t *log;
     uint64_t log_base;
-    int r, i;
-    if (size) {
-        log = g_malloc0(size * sizeof *log);
-    } else {
-        log = NULL;
-    }
+    int r;
+
+    log = g_malloc0(size * sizeof *log);
     log_base = (uint64_t)(unsigned long)log;
     r = ioctl(dev->control, VHOST_SET_LOG_BASE, &log_base);
     assert(r >= 0);
-    for (i = 0; i < dev->n_mem_sections; ++i) {
-        /* Sync only the range covered by the old log */
-        vhost_sync_dirty_bitmap(dev, &dev->mem_sections[i], 0,
-                                dev->log_size * VHOST_LOG_CHUNK - 1);
+    /* Sync only the range covered by the old log */
+    if (dev->log_size) {
+        vhost_log_sync_range(dev, 0, dev->log_size * VHOST_LOG_CHUNK - 1);
     }
     if (dev->log) {
         g_free(dev->log);
@@ -619,13 +634,16 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
 {
     hwaddr s, l, a;
     int r;
+    int vhost_vq_index = idx - dev->vq_index;
     struct vhost_vring_file file = {
-        .index = idx,
+        .index = vhost_vq_index
     };
     struct vhost_vring_state state = {
-        .index = idx,
+        .index = vhost_vq_index
     };
     struct VirtQueue *vvq = virtio_get_queue(vdev, idx);
+
+    assert(idx >= dev->vq_index && idx < dev->vq_index + dev->nvqs);
 
     vq->num = state.num = virtio_queue_get_num(vdev, idx);
     r = ioctl(dev->control, VHOST_SET_VRING_NUM, &state);
@@ -669,11 +687,12 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
         goto fail_alloc_ring;
     }
 
-    r = vhost_virtqueue_set_addr(dev, vq, idx, dev->log_enabled);
+    r = vhost_virtqueue_set_addr(dev, vq, vhost_vq_index, dev->log_enabled);
     if (r < 0) {
         r = -errno;
         goto fail_alloc;
     }
+
     file.fd = event_notifier_get_fd(virtio_queue_get_host_notifier(vvq));
     r = ioctl(dev->control, VHOST_SET_VRING_KICK, &file);
     if (r) {
@@ -709,9 +728,10 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
                                     unsigned idx)
 {
     struct vhost_vring_state state = {
-        .index = idx,
+        .index = idx - dev->vq_index
     };
     int r;
+    assert(idx >= dev->vq_index && idx < dev->vq_index + dev->nvqs);
     r = ioctl(dev->control, VHOST_GET_VRING_BASE, &state);
     if (r < 0) {
         fprintf(stderr, "vhost VQ %d ring restore failed: %d\n", idx, r);
@@ -867,7 +887,9 @@ int vhost_dev_enable_notifiers(struct vhost_dev *hdev, VirtIODevice *vdev)
     }
 
     for (i = 0; i < hdev->nvqs; ++i) {
-        r = vdev->binding->set_host_notifier(vdev->binding_opaque, i, true);
+        r = vdev->binding->set_host_notifier(vdev->binding_opaque,
+                                             hdev->vq_index + i,
+                                             true);
         if (r < 0) {
             fprintf(stderr, "vhost VQ %d notifier binding failed: %d\n", i, -r);
             goto fail_vq;
@@ -877,7 +899,9 @@ int vhost_dev_enable_notifiers(struct vhost_dev *hdev, VirtIODevice *vdev)
     return 0;
 fail_vq:
     while (--i >= 0) {
-        r = vdev->binding->set_host_notifier(vdev->binding_opaque, i, false);
+        r = vdev->binding->set_host_notifier(vdev->binding_opaque,
+                                             hdev->vq_index + i,
+                                             false);
         if (r < 0) {
             fprintf(stderr, "vhost VQ %d notifier cleanup error: %d\n", i, -r);
             fflush(stderr);
@@ -898,7 +922,9 @@ void vhost_dev_disable_notifiers(struct vhost_dev *hdev, VirtIODevice *vdev)
     int i, r;
 
     for (i = 0; i < hdev->nvqs; ++i) {
-        r = vdev->binding->set_host_notifier(vdev->binding_opaque, i, false);
+        r = vdev->binding->set_host_notifier(vdev->binding_opaque,
+                                             hdev->vq_index + i,
+                                             false);
         if (r < 0) {
             fprintf(stderr, "vhost VQ %d notifier cleanup failed: %d\n", i, -r);
             fflush(stderr);
@@ -912,8 +938,9 @@ void vhost_dev_disable_notifiers(struct vhost_dev *hdev, VirtIODevice *vdev)
  */
 bool vhost_virtqueue_pending(struct vhost_dev *hdev, int n)
 {
-    struct vhost_virtqueue *vq = hdev->vqs + n;
+    struct vhost_virtqueue *vq = hdev->vqs + n - hdev->vq_index;
     assert(hdev->started);
+    assert(n >= hdev->vq_index && n < hdev->vq_index + hdev->nvqs);
     return event_notifier_test_and_clear(&vq->masked_notifier);
 }
 
@@ -922,15 +949,16 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
                          bool mask)
 {
     struct VirtQueue *vvq = virtio_get_queue(vdev, n);
-    int r;
+    int r, index = n - hdev->vq_index;
 
     assert(hdev->started);
+    assert(n >= hdev->vq_index && n < hdev->vq_index + hdev->nvqs);
 
     struct vhost_vring_file file = {
-        .index = n,
+        .index = index
     };
     if (mask) {
-        file.fd = event_notifier_get_fd(&hdev->vqs[n].masked_notifier);
+        file.fd = event_notifier_get_fd(&hdev->vqs[index].masked_notifier);
     } else {
         file.fd = event_notifier_get_fd(virtio_queue_get_guest_notifier(vvq));
     }
@@ -945,20 +973,6 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
 
     hdev->started = true;
 
-    if (!vdev->binding->set_guest_notifiers) {
-        fprintf(stderr, "binding does not support guest notifiers\n");
-        r = -ENOSYS;
-        goto fail;
-    }
-
-    r = vdev->binding->set_guest_notifiers(vdev->binding_opaque,
-                                           hdev->nvqs,
-                                           true);
-    if (r < 0) {
-        fprintf(stderr, "Error binding guest notifier: %d\n", -r);
-        goto fail_notifiers;
-    }
-
     r = vhost_dev_set_features(hdev, hdev->log_enabled);
     if (r < 0) {
         goto fail_features;
@@ -970,9 +984,9 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
     }
     for (i = 0; i < hdev->nvqs; ++i) {
         r = vhost_virtqueue_start(hdev,
-                                 vdev,
-                                 hdev->vqs + i,
-                                 i);
+                                  vdev,
+                                  hdev->vqs + i,
+                                  hdev->vq_index + i);
         if (r < 0) {
             goto fail_vq;
         }
@@ -995,15 +1009,13 @@ fail_log:
 fail_vq:
     while (--i >= 0) {
         vhost_virtqueue_stop(hdev,
-                                vdev,
-                                hdev->vqs + i,
-                                i);
+                             vdev,
+                             hdev->vqs + i,
+                             hdev->vq_index + i);
     }
+    i = hdev->nvqs;
 fail_mem:
 fail_features:
-    vdev->binding->set_guest_notifiers(vdev->binding_opaque, hdev->nvqs, false);
-fail_notifiers:
-fail:
 
     hdev->started = false;
     return r;
@@ -1012,29 +1024,19 @@ fail:
 /* Host notifiers must be enabled at this point. */
 void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev)
 {
-    int i, r;
+    int i;
 
     for (i = 0; i < hdev->nvqs; ++i) {
         vhost_virtqueue_stop(hdev,
-                                vdev,
-                                hdev->vqs + i,
-                                i);
+                             vdev,
+                             hdev->vqs + i,
+                             hdev->vq_index + i);
     }
-    for (i = 0; i < hdev->n_mem_sections; ++i) {
-        vhost_sync_dirty_bitmap(hdev, &hdev->mem_sections[i],
-                                0, (hwaddr)~0x0ull);
-    }
-    r = vdev->binding->set_guest_notifiers(vdev->binding_opaque,
-                                           hdev->nvqs,
-                                           false);
-    if (r < 0) {
-        fprintf(stderr, "vhost guest notifier cleanup failed: %d\n", r);
-        fflush(stderr);
-    }
-    assert (r >= 0);
+    vhost_log_sync_range(hdev, 0, ~0x0ull);
 
     hdev->started = false;
     g_free(hdev->log);
     hdev->log = NULL;
     hdev->log_size = 0;
 }
+

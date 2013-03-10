@@ -1,7 +1,15 @@
 /*
- * QEMU Baum
+ * Linux host USB redirector
  *
- * Copyright (c) 2008 Samuel Thibault
+ * Copyright (c) 2005 Fabrice Bellard
+ *
+ * Copyright (c) 2008 Max Krasnyansky
+ *      Support for host device auto connect & disconnect
+ *      Major rewrite to support fully async operation
+ *
+ * Copyright 2008 TJ <linux@tjworld.net>
+ *      Added flexible support for /dev/bus/usb /sys/bus/usb/devices in addition
+ *      to the legacy /proc/bus/usb USB device discovery and handling
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,10 +29,16 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#ifndef HW_BAUM_H
-#define HW_BAUM_H 1
 
-/* char device */
-CharDriverState *chr_baum_init(QemuOpts *opts);
+#ifndef QEMU_USB_HOST_H
+#define QEMU_USB_HOST_H
 
-#endif
+struct USBAutoFilter {
+    uint32_t bus_num;
+    uint32_t addr;
+    char     *port;
+    uint32_t vendor_id;
+    uint32_t product_id;
+};
+
+#endif /* QEMU_USB_HOST_H */

@@ -33,7 +33,6 @@ struct OpenRISCCPU;
 #include "exec/cpu-defs.h"
 #include "fpu/softfloat.h"
 #include "qom/cpu.h"
-#include "qapi/error.h"
 
 #define TYPE_OPENRISC_CPU "or32-cpu"
 
@@ -46,6 +45,7 @@ struct OpenRISCCPU;
 
 /**
  * OpenRISCCPUClass:
+ * @parent_realize: The parent class' realize handler.
  * @parent_reset: The parent class' reset handler.
  *
  * A OpenRISC CPU model.
@@ -55,6 +55,7 @@ typedef struct OpenRISCCPUClass {
     CPUClass parent_class;
     /*< public >*/
 
+    DeviceRealize parent_realize;
     void (*parent_reset)(CPUState *cpu);
 } OpenRISCCPUClass;
 
@@ -339,8 +340,9 @@ static inline OpenRISCCPU *openrisc_env_get_cpu(CPUOpenRISCState *env)
 
 #define ENV_GET_CPU(e) CPU(openrisc_env_get_cpu(e))
 
+#define ENV_OFFSET offsetof(OpenRISCCPU, env)
+
 OpenRISCCPU *cpu_openrisc_init(const char *cpu_model);
-void openrisc_cpu_realize(Object *obj, Error **errp);
 
 void cpu_openrisc_list(FILE *f, fprintf_function cpu_fprintf);
 int cpu_openrisc_exec(CPUOpenRISCState *s);

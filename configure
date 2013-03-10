@@ -226,6 +226,8 @@ coroutine=""
 seccomp=""
 glusterfs=""
 virtio_blk_data_plane=""
+gtk=""
+gtkabi="2.0"
 
 # parse CC options first
 for opt do
@@ -897,6 +899,12 @@ for opt do
   ;;
   --enable-virtio-blk-data-plane) virtio_blk_data_plane="yes"
   ;;
+  --disable-gtk) gtk="no"
+  ;;
+  --enable-gtk) gtk="yes"
+  ;;
+  --with-gtkabi=*) gtkabi="$optarg"
+  ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
   esac
@@ -978,6 +986,10 @@ microblaze-linux-user \
 microblazeel-linux-user \
 mips-linux-user \
 mipsel-linux-user \
+mips64-linux-user \
+mips64el-linux-user \
+mipsn32-linux-user \
+mipsn32el-linux-user \
 or32-linux-user \
 ppc-linux-user \
 ppc64-linux-user \
@@ -1047,6 +1059,8 @@ echo "  --disable-strip          disable stripping binaries"
 echo "  --disable-werror         disable compilation abort on warning"
 echo "  --disable-sdl            disable SDL"
 echo "  --enable-sdl             enable SDL"
+echo "  --disable-gtk            disable gtk UI"
+echo "  --enable-gtk             enable gtk UI"
 echo "  --disable-virtfs         disable VirtFS"
 echo "  --enable-virtfs          enable VirtFS"
 echo "  --disable-vnc            disable VNC"
@@ -1180,7 +1194,7 @@ fi
 z_version=`cut -f3 -d. $source_path/VERSION`
 
 if test -z "$werror" ; then
-    if test "$z_version" = "50" -a \
+    if test -d "$source_path/.git" -a \
         "$linux" = "yes" ; then
         werror="yes"
     else
@@ -1633,6 +1647,36 @@ if test "$sparse" != "no" ; then
     fi
     sparse=no
   fi
+fi
+
+##########################################
+# GTK probe
+
+if test "$gtk" != "no"; then
+    gtkpackage="gtk+-$gtkabi"
+    if test "$gtkabi" = "3.0" ; then
+      gtkversion="3.0.0"
+      vtepackage="vte-2.90"
+      vteversion="0.32.0"
+    else
+      gtkversion="2.18.0"
+      vtepackage="vte"
+      vteversion="0.24.0"
+    fi
+    if $pkg_config --exists "$gtkpackage >= $gtkversion" && \
+       $pkg_config --exists "$vtepackage >= $vteversion"; then
+	gtk_cflags=`$pkg_config --cflags $gtkpackage 2>/dev/null`
+	gtk_libs=`$pkg_config --libs $gtkpackage 2>/dev/null`
+	vte_cflags=`$pkg_config --cflags $vtepackage 2>/dev/null`
+	vte_libs=`$pkg_config --libs $vtepackage 2>/dev/null`
+	libs_softmmu="$gtk_libs $vte_libs $libs_softmmu"
+	gtk="yes"
+    else
+	if test "$gtk" = "yes" ; then
+	    feature_not_found "gtk"
+	fi
+	gtk="no"
+    fi
 fi
 
 ##########################################
@@ -2388,7 +2432,7 @@ fi
 ##########################################
 # opengl probe, used by milkymist-tmu2
 if test "$opengl" != "no" ; then
-  opengl_libs="-lGL"
+  opengl_libs="-lGL -lX11"
   cat > $TMPC << EOF
 #include <X11/Xlib.h>
 #include <GL/gl.h>
@@ -3090,20 +3134,27 @@ if compile_prog "" "" ; then
 fi
 
 ########################################
-# check whether we can disable the -Wunused-but-set-variable
-# option with a pragma (this is needed to silence a warning in
-# some versions of the valgrind VALGRIND_STACK_DEREGISTER macro.)
-# This test has to be compiled with -Werror as otherwise an
-# unknown pragma is only a warning.
+# check whether we can disable warning option with a pragma (this is needed
+# to silence warnings in the headers of some versions of external libraries).
+# This test has to be compiled with -Werror as otherwise an unknown pragma is
+# only a warning.
+#
+# If we can't selectively disable warning in the code, disable -Werror so that
+# the build doesn't fail anyway.
+
 pragma_disable_unused_but_set=no
 cat > $TMPC << EOF
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wstrict-prototypes"
+
 int main(void) {
     return 0;
 }
 EOF
 if compile_prog "-Werror" "" ; then
     pragma_diagnostic_available=yes
+else
+    werror=no
 fi
 
 ########################################
@@ -3150,6 +3201,22 @@ if compile_prog "" "" ; then
     cpuid_h=yes
 fi
 
+########################################
+# check if __[u]int128_t is usable.
+
+int128=no
+cat > $TMPC << EOF
+__int128_t a;
+__uint128_t b;
+int main (void) {
+  a = a + b;
+  b = a * b;
+  return 0;
+}
+EOF
+if compile_prog "" "" ; then
+    int128=yes
+fi
 
 ##########################################
 # End of CC checks
@@ -3202,6 +3269,7 @@ fi
 
 qemu_confdir=$sysconfdir$confsuffix
 qemu_datadir=$datadir$confsuffix
+qemu_localedir="$datadir/locale"
 
 tools=""
 if test "$want_tools" = "yes" ; then
@@ -3285,6 +3353,7 @@ if test "$darwin" = "yes" ; then
 fi
 echo "pixman            $pixman"
 echo "SDL support       $sdl"
+echo "GTK support       $gtk"
 echo "curses support    $curses"
 echo "curl support      $curl"
 echo "mingw32 support   $mingw32"
@@ -3374,6 +3443,7 @@ echo "qemu_localstatedir=$local_statedir" >> $config_host_mak
 echo "qemu_helperdir=$libexecdir" >> $config_host_mak
 echo "extra_cflags=$EXTRA_CFLAGS" >> $config_host_mak
 echo "extra_ldflags=$EXTRA_LDFLAGS" >> $config_host_mak
+echo "qemu_localedir=$qemu_localedir" >> $config_host_mak
 
 echo "ARCH=$ARCH" >> $config_host_mak
 if test "$debug_tcg" = "yes" ; then
@@ -3575,6 +3645,11 @@ if test "$bluez" = "yes" ; then
   echo "BLUEZ_CFLAGS=$bluez_cflags" >> $config_host_mak
 fi
 echo "GLIB_CFLAGS=$glib_cflags" >> $config_host_mak
+if test "$gtk" = "yes" ; then
+  echo "CONFIG_GTK=y" >> $config_host_mak
+  echo "GTK_CFLAGS=$gtk_cflags" >> $config_host_mak
+  echo "VTE_CFLAGS=$vte_cflags" >> $config_host_mak
+fi
 if test "$xen" = "yes" ; then
   echo "CONFIG_XEN_BACKEND=y" >> $config_host_mak
   echo "CONFIG_XEN_CTRL_INTERFACE_VERSION=$xen_ctrl_version" >> $config_host_mak
@@ -3692,6 +3767,10 @@ if test "$cpuid_h" = "yes" ; then
   echo "CONFIG_CPUID_H=y" >> $config_host_mak
 fi
 
+if test "$int128" = "yes" ; then
+  echo "CONFIG_INT128=y" >> $config_host_mak
+fi
+
 if test "$glusterfs" = "yes" ; then
   echo "CONFIG_GLUSTERFS=y" >> $config_host_mak
 fi
@@ -3703,7 +3782,7 @@ fi
 # USB host support
 case "$usb" in
 linux)
-  echo "HOST_USB=linux" >> $config_host_mak
+  echo "HOST_USB=linux legacy" >> $config_host_mak
 ;;
 bsd)
   echo "HOST_USB=bsd" >> $config_host_mak
@@ -3933,9 +4012,10 @@ case "$target_arch2" in
     target_nptl="yes"
   ;;
   mipsn32|mipsn32el)
-    TARGET_ARCH=mipsn32
+    TARGET_ARCH=mips64
     TARGET_BASE_ARCH=mips
     echo "TARGET_ABI_MIPSN32=y" >> $config_target_mak
+    echo "TARGET_ABI32=y" >> $config_target_mak
   ;;
   mips64|mips64el)
     TARGET_ARCH=mips64
@@ -4054,7 +4134,7 @@ case "$target_arch2" in
     echo "CONFIG_NO_XEN=y" >> $config_target_mak
 esac
 case "$target_arch2" in
-  i386|x86_64|ppcemb|ppc|ppc64|s390x)
+  arm|i386|x86_64|ppcemb|ppc|ppc64|s390x)
     # Make sure the target and host cpus are compatible
     if test "$kvm" = "yes" -a "$target_softmmu" = "yes" -a \
       \( "$target_arch2" = "$cpu" -o \
@@ -4285,7 +4365,7 @@ DIRS="$DIRS roms/seabios roms/vgabios"
 DIRS="$DIRS qapi-generated"
 FILES="Makefile tests/tcg/Makefile qdict-test-data.txt"
 FILES="$FILES tests/tcg/cris/Makefile tests/tcg/cris/.gdbinit"
-FILES="$FILES tests/tcg/lm32/Makefile"
+FILES="$FILES tests/tcg/lm32/Makefile po/Makefile"
 FILES="$FILES pc-bios/optionrom/Makefile pc-bios/keymaps"
 FILES="$FILES pc-bios/spapr-rtas/Makefile"
 FILES="$FILES roms/seabios/Makefile roms/vgabios/Makefile"

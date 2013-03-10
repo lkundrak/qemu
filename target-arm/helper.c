@@ -1272,7 +1272,6 @@ ARMCPU *cpu_arm_init(const char *cpu_model)
     ARMCPU *cpu;
     CPUARMState *env;
     ObjectClass *oc;
-    static int inited = 0;
 
     oc = cpu_class_by_name(TYPE_ARM_CPU, cpu_model);
     if (!oc) {
@@ -1281,14 +1280,17 @@ ARMCPU *cpu_arm_init(const char *cpu_model)
     cpu = ARM_CPU(object_new(object_class_get_name(oc)));
     env = &cpu->env;
     env->cpu_model_str = cpu_model;
-    arm_cpu_realize(cpu);
 
-    if (tcg_enabled() && !inited) {
-        inited = 1;
-        arm_translate_init();
-    }
+    /* TODO this should be set centrally, once possible */
+    object_property_set_bool(OBJECT(cpu), true, "realized", NULL);
 
-    cpu_reset(CPU(cpu));
+    return cpu;
+}
+
+void arm_cpu_register_gdb_regs_for_features(ARMCPU *cpu)
+{
+    CPUARMState *env = &cpu->env;
+
     if (arm_feature(env, ARM_FEATURE_NEON)) {
         gdb_register_coprocessor(env, vfp_gdb_get_reg, vfp_gdb_set_reg,
                                  51, "arm-neon.xml", 0);
@@ -1299,8 +1301,6 @@ ARMCPU *cpu_arm_init(const char *cpu_model)
         gdb_register_coprocessor(env, vfp_gdb_get_reg, vfp_gdb_set_reg,
                                  19, "arm-vfp.xml", 0);
     }
-    qemu_init_vcpu(env);
-    return cpu;
 }
 
 /* Sort alphabetically by type name, except for "any". */
@@ -1312,9 +1312,9 @@ static gint arm_cpu_list_compare(gconstpointer a, gconstpointer b)
 
     name_a = object_class_get_name(class_a);
     name_b = object_class_get_name(class_b);
-    if (strcmp(name_a, "any") == 0) {
+    if (strcmp(name_a, "any-" TYPE_ARM_CPU) == 0) {
         return 1;
-    } else if (strcmp(name_b, "any") == 0) {
+    } else if (strcmp(name_b, "any-" TYPE_ARM_CPU) == 0) {
         return -1;
     } else {
         return strcmp(name_a, name_b);
@@ -1325,9 +1325,14 @@ static void arm_cpu_list_entry(gpointer data, gpointer user_data)
 {
     ObjectClass *oc = data;
     CPUListState *s = user_data;
+    const char *typename;
+    char *name;
 
+    typename = object_class_get_name(oc);
+    name = g_strndup(typename, strlen(typename) - strlen("-" TYPE_ARM_CPU));
     (*s->cpu_fprintf)(s->file, "  %s\n",
-                      object_class_get_name(oc));
+                      name);
+    g_free(name);
 }
 
 void arm_cpu_list(FILE *f, fprintf_function cpu_fprintf)
@@ -1621,7 +1626,7 @@ uint32_t HELPER(get_r13_banked)(CPUARMState *env, uint32_t mode)
 #else
 
 /* Map CPU modes onto saved register banks.  */
-static inline int bank_number(CPUARMState *env, int mode)
+int bank_number(int mode)
 {
     switch (mode) {
     case ARM_CPU_MODE_USR:
@@ -1638,8 +1643,7 @@ static inline int bank_number(CPUARMState *env, int mode)
     case ARM_CPU_MODE_FIQ:
         return 5;
     }
-    cpu_abort(env, "Bad mode %x\n", mode);
-    return -1;
+    hw_error("bank number requested for bad CPSR mode value 0x%x\n", mode);
 }
 
 void switch_mode(CPUARMState *env, int mode)
@@ -1659,12 +1663,12 @@ void switch_mode(CPUARMState *env, int mode)
         memcpy (env->regs + 8, env->fiq_regs, 5 * sizeof(uint32_t));
     }
 
-    i = bank_number(env, old_mode);
+    i = bank_number(old_mode);
     env->banked_r13[i] = env->regs[13];
     env->banked_r14[i] = env->regs[14];
     env->banked_spsr[i] = env->spsr;
 
-    i = bank_number(env, mode);
+    i = bank_number(mode);
     env->regs[13] = env->banked_r13[i];
     env->regs[14] = env->banked_r14[i];
     env->spsr = env->banked_spsr[i];
@@ -2537,7 +2541,7 @@ void HELPER(set_r13_banked)(CPUARMState *env, uint32_t mode, uint32_t val)
     if ((env->uncached_cpsr & CPSR_M) == mode) {
         env->regs[13] = val;
     } else {
-        env->banked_r13[bank_number(env, mode)] = val;
+        env->banked_r13[bank_number(mode)] = val;
     }
 }
 
@@ -2546,7 +2550,7 @@ uint32_t HELPER(get_r13_banked)(CPUARMState *env, uint32_t mode)
     if ((env->uncached_cpsr & CPSR_M) == mode) {
         return env->regs[13];
     } else {
-        return env->banked_r13[bank_number(env, mode)];
+        return env->banked_r13[bank_number(mode)];
     }
 }
 
@@ -2898,11 +2902,6 @@ uint32_t HELPER(sel_flags)(uint32_t flags, uint32_t a, uint32_t b)
     if (flags & 8)
         mask |= 0xff000000;
     return (a & mask) | (b & ~mask);
-}
-
-uint32_t HELPER(logicq_cc)(uint64_t val)
-{
-    return (val >> 32) | (val != 0);
 }
 
 /* VFP support.  We follow the convention used for VFP instructions:

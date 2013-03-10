@@ -504,6 +504,9 @@ void mips_cpu_list (FILE *f, fprintf_function cpu_fprintf);
 #define cpu_signal_handler cpu_mips_signal_handler
 #define cpu_list mips_cpu_list
 
+extern void cpu_wrdsp(uint32_t rs, uint32_t mask_num, CPUMIPSState *env);
+extern uint32_t cpu_rddsp(uint32_t mask_num, CPUMIPSState *env);
+
 #define CPU_SAVE_VERSION 3
 
 /* MMU modes definitions. We carefully match the indices with our
@@ -629,6 +632,7 @@ enum {
 #define CPU_INTERRUPT_WAKE CPU_INTERRUPT_TGT_INT_0
 
 int cpu_mips_exec(CPUMIPSState *s);
+void mips_tcg_init(void);
 MIPSCPU *cpu_mips_init(const char *cpu_model);
 int cpu_mips_signal_handler(int host_signum, void *pinfo, void *puc);
 

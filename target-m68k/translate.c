@@ -574,7 +574,7 @@ static inline TCGv gen_ea_once(CPUM68KState *env, DisasContext *s,
     return gen_ldst(s, opsize, tmp, val, what);
 }
 
-/* Generate code to load/store a value ito/from an EA.  If VAL > 0 this is
+/* Generate code to load/store a value from/into an EA.  If VAL > 0 this is
    a write otherwise it is a read (0 == sign extend, -1 == zero extend).
    ADDRP is non-null for readwrite operands.  */
 static TCGv gen_ea(CPUM68KState *env, DisasContext *s, uint16_t insn,
@@ -2999,7 +2999,7 @@ gen_intermediate_code_internal(CPUM68KState *env, TranslationBlock *tb,
     if (max_insns == 0)
         max_insns = CF_COUNT_MASK;
 
-    gen_icount_start();
+    gen_tb_start();
     do {
         pc_offset = dc->pc - pc_start;
         gen_throws_exception = NULL;
@@ -3063,7 +3063,7 @@ gen_intermediate_code_internal(CPUM68KState *env, TranslationBlock *tb,
             break;
         }
     }
-    gen_icount_end(tb, num_insns);
+    gen_tb_end(tb, num_insns);
     *tcg_ctx.gen_opc_ptr = INDEX_op_end;
 
 #ifdef DEBUG_DISAS

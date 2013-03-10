@@ -721,10 +721,10 @@ static void help_cmd(Monitor *mon, const char *name)
     } else {
         help_cmd_dump(mon, mon_cmds, "", name);
         if (name && !strcmp(name, "log")) {
-            const CPULogItem *item;
+            const QEMULogItem *item;
             monitor_printf(mon, "Log items (comma separated):\n");
             monitor_printf(mon, "%-10s %s\n", "none", "remove all logs");
-            for(item = cpu_log_items; item->mask != 0; item++) {
+            for (item = qemu_log_items; item->mask != 0; item++) {
                 monitor_printf(mon, "%-10s %s\n", item->name, item->help);
             }
         }
@@ -964,7 +964,7 @@ static int client_migrate_info(Monitor *mon, const QDict *qdict,
 
 static void do_logfile(Monitor *mon, const QDict *qdict)
 {
-    cpu_set_log_filename(qdict_get_str(qdict, "filename"));
+    qemu_set_log_filename(qdict_get_str(qdict, "filename"));
 }
 
 static void do_log(Monitor *mon, const QDict *qdict)
@@ -975,13 +975,13 @@ static void do_log(Monitor *mon, const QDict *qdict)
     if (!strcmp(items, "none")) {
         mask = 0;
     } else {
-        mask = cpu_str_to_log_mask(items);
+        mask = qemu_str_to_log_mask(items);
         if (!mask) {
             help_cmd(mon, "log");
             return;
         }
     }
-    cpu_set_log(mask);
+    qemu_set_log(mask);
 }
 
 static void do_singlestep(Monitor *mon, const QDict *qdict)
@@ -2740,7 +2740,7 @@ static const mon_cmd_t qmp_cmds[] = {
 /*******************************************************************/
 
 static const char *pch;
-static jmp_buf expr_env;
+static sigjmp_buf expr_env;
 
 #define MD_TLONG 0
 #define MD_I32   1
@@ -3135,7 +3135,7 @@ static const MonitorDef monitor_defs[] = {
 static void expr_error(Monitor *mon, const char *msg)
 {
     monitor_printf(mon, "%s\n", msg);
-    longjmp(expr_env, 1);
+    siglongjmp(expr_env, 1);
 }
 
 /* return 0 if OK, -1 if not found */
@@ -3345,7 +3345,7 @@ static int64_t expr_sum(Monitor *mon)
 static int get_expr(Monitor *mon, int64_t *pval, const char **pp)
 {
     pch = *pp;
-    if (setjmp(expr_env)) {
+    if (sigsetjmp(expr_env, 0)) {
         *pp = pch;
         return -1;
     }

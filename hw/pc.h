@@ -187,4 +187,40 @@ void pc_system_firmware_init(MemoryRegion *rom_memory);
 
 int e820_add_entry(uint64_t, uint64_t, uint32_t);
 
+#define PC_COMPAT_1_4 \
+        {\
+            .driver   = "scsi-hd",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "scsi-cd",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "scsi-disk",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "ide-hd",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "ide-cd",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "ide-drive",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "virtio-blk-pci",\
+            .property = "discard_granularity",\
+            .value    = stringify(0),\
+	},{\
+            .driver   = "virtio-serial-pci",\
+            .property = "vectors",\
+            /* DEV_NVECTORS_UNSPECIFIED as a uint32_t string */\
+            .value    = stringify(0xFFFFFFFF),\
+	}
+
 #endif

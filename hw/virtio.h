@@ -181,6 +181,8 @@ VirtQueue *virtio_add_queue(VirtIODevice *vdev, int queue_size,
                             void (*handle_output)(VirtIODevice *,
                                                   VirtQueue *));
 
+void virtio_del_queue(VirtIODevice *vdev, int n);
+
 void virtqueue_push(VirtQueue *vq, const VirtQueueElement *elem,
                     unsigned int len);
 void virtqueue_flush(VirtQueue *vq, unsigned int count);
@@ -241,7 +243,8 @@ typedef struct VirtIOBlkConf VirtIOBlkConf;
 VirtIODevice *virtio_blk_init(DeviceState *dev, VirtIOBlkConf *blk);
 struct virtio_net_conf;
 VirtIODevice *virtio_net_init(DeviceState *dev, NICConf *conf,
-                              struct virtio_net_conf *net);
+                              struct virtio_net_conf *net,
+                              uint32_t host_features);
 typedef struct virtio_serial_conf virtio_serial_conf;
 VirtIODevice *virtio_serial_init(DeviceState *dev, virtio_serial_conf *serial);
 VirtIODevice *virtio_balloon_init(DeviceState *dev);
@@ -278,6 +281,7 @@ hwaddr virtio_queue_get_ring_size(VirtIODevice *vdev, int n);
 uint16_t virtio_queue_get_last_avail_idx(VirtIODevice *vdev, int n);
 void virtio_queue_set_last_avail_idx(VirtIODevice *vdev, int n, uint16_t idx);
 VirtQueue *virtio_get_queue(VirtIODevice *vdev, int n);
+uint16_t virtio_get_queue_index(VirtQueue *vq);
 int virtio_queue_get_id(VirtQueue *vq);
 EventNotifier *virtio_queue_get_guest_notifier(VirtQueue *vq);
 void virtio_queue_set_guest_notifier_fd_handler(VirtQueue *vq, bool assign,

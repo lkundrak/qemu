@@ -158,6 +158,7 @@ static void ich9_cc_write(void *opaque, hwaddr addr,
 
     ich9_cc_addr_len(&addr, &len);
     memcpy(lpc->chip_config + addr, &val, len);
+    pci_bus_fire_intx_routing_notifier(lpc->d.bus);
     ich9_cc_update(lpc);
 }
 
@@ -286,6 +287,32 @@ int ich9_lpc_map_irq(PCIDevice *pci_dev, int intx)
     return lpc->irr[PCI_SLOT(pci_dev->devfn)][intx];
 }
 
+PCIINTxRoute ich9_route_intx_pin_to_irq(void *opaque, int pirq_pin)
+{
+    ICH9LPCState *lpc = opaque;
+    PCIINTxRoute route;
+    int pic_irq;
+    int pic_dis;
+
+    assert(0 <= pirq_pin);
+    assert(pirq_pin < ICH9_LPC_NB_PIRQS);
+
+    route.mode = PCI_INTX_ENABLED;
+    ich9_lpc_pic_irq(lpc, pirq_pin, &pic_irq, &pic_dis);
+    if (!pic_dis) {
+        if (pic_irq < ICH9_LPC_PIC_NUM_PINS) {
+            route.irq = pic_irq;
+        } else {
+            route.mode = PCI_INTX_DISABLED;
+            route.irq = -1;
+        }
+    } else {
+        route.irq = ich9_pirq_to_gsi(pirq_pin);
+    }
+
+    return route;
+}
+
 static int ich9_lpc_sci_irq(ICH9LPCState *lpc)
 {
     switch (lpc->d.config[ICH9_LPC_ACPI_CTRL] &
@@ -405,6 +432,12 @@ static void ich9_lpc_config_write(PCIDevice *d,
     if (ranges_overlap(addr, len, ICH9_LPC_RCBA, 4)) {
         ich9_lpc_rcba_update(lpc, rbca_old);
     }
+    if (ranges_overlap(addr, len, ICH9_LPC_PIRQA_ROUT, 4)) {
+        pci_bus_fire_intx_routing_notifier(lpc->d.bus);
+    }
+    if (ranges_overlap(addr, len, ICH9_LPC_PIRQE_ROUT, 4)) {
+        pci_bus_fire_intx_routing_notifier(lpc->d.bus);
+    }
 }
 
 static void ich9_lpc_reset(DeviceState *qdev)
@@ -433,6 +466,7 @@ static void ich9_lpc_reset(DeviceState *qdev)
     ich9_lpc_rcba_update(lpc, rbca_old);
 
     lpc->sci_level = 0;
+    lpc->rst_cnt = 0;
 }
 
 static const MemoryRegionOps rbca_mmio_ops = {
@@ -465,6 +499,32 @@ static void ich9_lpc_machine_ready(Notifier *n, void *opaque)
     }
 }
 
+/* reset control */
+static void ich9_rst_cnt_write(void *opaque, hwaddr addr, uint64_t val,
+                               unsigned len)
+{
+    ICH9LPCState *lpc = opaque;
+
+    if (val & 4) {
+        qemu_system_reset_request();
+        return;
+    }
+    lpc->rst_cnt = val & 0xA; /* keep FULL_RST (bit 3) and SYS_RST (bit 1) */
+}
+
+static uint64_t ich9_rst_cnt_read(void *opaque, hwaddr addr, unsigned len)
+{
+    ICH9LPCState *lpc = opaque;
+
+    return lpc->rst_cnt;
+}
+
+static const MemoryRegionOps ich9_rst_cnt_ops = {
+    .read = ich9_rst_cnt_read,
+    .write = ich9_rst_cnt_write,
+    .endianness = DEVICE_LITTLE_ENDIAN
+};
+
 static int ich9_lpc_initfn(PCIDevice *d)
 {
     ICH9LPCState *lpc = ICH9_LPC_DEVICE(d);
@@ -486,8 +546,31 @@ static int ich9_lpc_initfn(PCIDevice *d)
     lpc->machine_ready.notify = ich9_lpc_machine_ready;
     qemu_add_machine_init_done_notifier(&lpc->machine_ready);
 
+    memory_region_init_io(&lpc->rst_cnt_mem, &ich9_rst_cnt_ops, lpc,
+                          "lpc-reset-control", 1);
+    memory_region_add_subregion_overlap(pci_address_space_io(d),
+                                        ICH9_RST_CNT_IOPORT, &lpc->rst_cnt_mem,
+                                        1);
+
     return 0;
 }
+
+static bool ich9_rst_cnt_needed(void *opaque)
+{
+    ICH9LPCState *lpc = opaque;
+
+    return (lpc->rst_cnt != 0);
+}
+
+static const VMStateDescription vmstate_ich9_rst_cnt = {
+    .name = "ICH9LPC/rst_cnt",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_UINT8(rst_cnt, ICH9LPCState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 static const VMStateDescription vmstate_ich9_lpc = {
     .name = "ICH9LPC",
@@ -502,6 +585,13 @@ static const VMStateDescription vmstate_ich9_lpc = {
         VMSTATE_UINT8_ARRAY(chip_config, ICH9LPCState, ICH9_CC_SIZE),
         VMSTATE_UINT32(sci_level, ICH9LPCState),
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (VMStateSubsection[]) {
+        {
+            .vmsd = &vmstate_ich9_rst_cnt,
+            .needed = ich9_rst_cnt_needed
+        },
+        { 0 }
     }
 };
 

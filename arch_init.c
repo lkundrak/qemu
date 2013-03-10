@@ -414,6 +414,7 @@ static void migration_bitmap_sync(void)
     if (end_time > start_time + 1000) {
         s->dirty_pages_rate = num_dirty_pages_period * 1000
             / (end_time - start_time);
+        s->dirty_bytes_rate = s->dirty_pages_rate * TARGET_PAGE_SIZE;
         start_time = end_time;
         num_dirty_pages_period = 0;
     }
@@ -851,9 +852,6 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 
             qemu_get_buffer(f, host, TARGET_PAGE_SIZE);
         } else if (flags & RAM_SAVE_FLAG_XBZRLE) {
-            if (!migrate_use_xbzrle()) {
-                return -EINVAL;
-            }
             void *host = host_from_stream_offset(f, addr, flags);
             if (!host) {
                 return -EINVAL;
