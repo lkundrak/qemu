@@ -313,10 +313,10 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     s->pending = 0;
     
     // bcm2835_fb.invalidate = 0;
-    bcm2835_fb.xres = 0;
-    bcm2835_fb.yres = 0;
-    bcm2835_fb.xres_virtual = 0;
-    bcm2835_fb.yres_virtual = 0;
+    bcm2835_fb.xres = 640;
+    bcm2835_fb.yres = 480;
+    bcm2835_fb.xres_virtual = 640;
+    bcm2835_fb.yres_virtual = 480;
     // bcm2835_fb.xres = 1024;
     // bcm2835_fb.yres = 768;
     // bcm2835_fb.xres_virtual = 1024;
