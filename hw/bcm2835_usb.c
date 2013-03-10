@@ -183,7 +183,7 @@ static void channel_enable(bcm2835_usb_hc_state *c) {
     assert( dev != NULL );
     
     ep = usb_ep_get(dev, qpid, epnum);
-    usb_packet_setup(&c->packet, qpid, ep, devaddr, 0, 0); 
+    usb_packet_setup(&c->packet, qpid, ep, 0, devaddr, 0, 0); 
 
     if (xfersize > 0) {
         dma_memory_read(c->parent->dma, dma_addr, c->buffer, xfersize);
