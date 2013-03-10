@@ -21,6 +21,7 @@ extern hwaddr bcm2835_vcram_base;
 typedef struct {
     DisplayState *ds;
     int invalidate;
+    int lock;
 
     uint32_t xres, yres;
     uint32_t xres_virtual, yres_virtual;

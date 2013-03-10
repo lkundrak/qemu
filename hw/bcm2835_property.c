@@ -12,7 +12,7 @@
 
 #include "bcm2835_common.h"
 
-// #define LOG_REG_ACCESS
+#define LOG_REG_ACCESS
 
 typedef struct {
     SysBusDevice busdev;
@@ -23,9 +23,8 @@ typedef struct {
     uint32_t addr;
 } bcm2835_property_state;
 
-int bcm2835_fb_dirty;
 static void update_fb(void) {
-    bcm2835_fb_dirty = 1;
+    bcm2835_fb.lock = 1;
 
     bcm2835_fb.base = bcm2835_vcram_base;
     bcm2835_fb.base += BCM2835_FB_OFFSET;
@@ -50,12 +49,8 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
     int resplen;
     uint32_t offset, length, color;
     
-    bcm2835_fb_dirty = 0;
-    
     value &= ~0xf;
     s->addr = value;
-
-    
 
 #ifdef LOG_REG_ACCESS   
     size = ldl_phys(s->addr);
@@ -305,9 +300,10 @@ static void bcm2835_property_mbox_push(bcm2835_property_state *s,
     printf("=== PROPERTY MBOX PUSH END\n");
 #endif
 
-    if (bcm2835_fb_dirty) {
+    if (bcm2835_fb.lock) {
+        bcm2835_fb.invalidate = 1;
         qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
-        bcm2835_fb.invalidate = 1;    
+        bcm2835_fb.lock = 0;
     }
 }
 
