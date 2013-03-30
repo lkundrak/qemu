@@ -19,7 +19,7 @@ extern hwaddr bcm2835_vcram_base;
 #define BCM2835_FB_OFFSET 0x00100000
 
 typedef struct {
-    DisplayState *ds;
+    QemuConsole *con;
     int invalidate;
     int lock;
 

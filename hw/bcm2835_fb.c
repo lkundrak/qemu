@@ -76,8 +76,8 @@ static void draw_line_src16(void *opaque, uint8_t *d, const uint8_t *s,
     uint16_t rgb565;
     uint32_t rgb888;
     uint8_t r, g, b;
-
-    int bpp = ds_get_bits_per_pixel(bcm2835_fb.ds);
+    DisplaySurface *surface = qemu_console_surface(bcm2835_fb.con);
+    int bpp = surface_bytes_per_pixel(surface) * 8;
 
     while (width--) {
         switch(bcm2835_fb.bpp) {
@@ -148,6 +148,8 @@ static void fb_update_display(void *opaque)
     int dest_width = 0;
     
     static uint32_t frame = 0;
+
+    DisplaySurface *surface = qemu_console_surface(bcm2835_fb.con);
     
     if (++frame < FRAMESKIP) {
         return;
@@ -164,7 +166,7 @@ static void fb_update_display(void *opaque)
     src_width = bcm2835_fb.xres * (bcm2835_fb.bpp >> 3);
     
     dest_width = bcm2835_fb.xres;
-    switch (ds_get_bits_per_pixel(bcm2835_fb.ds)) {
+    switch (surface_bytes_per_pixel(surface) * 8) {
     case 0:
         return;
     case 8:
@@ -182,7 +184,7 @@ static void fb_update_display(void *opaque)
         dest_width *= 4;
         break;
     default:
-        hw_error("milkymist_vgafb: bad color depth\n");
+        hw_error("bcm2835_vgafb: bad color depth\n");
         break;
     }
 
@@ -190,7 +192,7 @@ static void fb_update_display(void *opaque)
     
     fn = draw_line_src16;
 
-    framebuffer_update_display(bcm2835_fb.ds, 
+    framebuffer_update_display(surface,
         sysbus_address_space(&s->busdev),
         bcm2835_fb.base,
         bcm2835_fb.xres,
@@ -203,7 +205,7 @@ static void fb_update_display(void *opaque)
         NULL,
         &first, &last);
     if (first >= 0) {
-        dpy_gfx_update(bcm2835_fb.ds, 0, first, 
+        dpy_gfx_update(bcm2835_fb.con, 0, first, 
             bcm2835_fb.xres, last - first + 1);
     }
 
@@ -244,7 +246,7 @@ static void bcm2835_fb_mbox_push(bcm2835_fb_state *s, uint32_t value)
 #endif
 
     bcm2835_fb.invalidate = 1;        
-    qemu_console_resize(bcm2835_fb.ds, bcm2835_fb.xres, bcm2835_fb.yres);
+    qemu_console_resize(bcm2835_fb.con, bcm2835_fb.xres, bcm2835_fb.yres);
     bcm2835_fb.lock = 0;
 }
 
@@ -337,7 +339,7 @@ static int bcm2835_fb_init(SysBusDevice *dev)
     
     sysbus_init_irq(dev, &s->mbox_irq);
     
-    bcm2835_fb.ds = graphic_console_init(fb_update_display,
+    bcm2835_fb.con = graphic_console_init(fb_update_display,
         fb_invalidate_display,
         NULL, NULL, s);
     bcm2835_fb.lock = 0;
